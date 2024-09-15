@@ -112,7 +112,7 @@ def get_current_identity(
             detail={"status": 401, "message": "Incorrect password"},
             headers={"WWW-Authenticate": "Basic"},
         )
-    return credentials.username
+    return f"{credentials.username}:{credentials.password}"
 
 @app.get("/")
 async def root():
@@ -196,6 +196,7 @@ async def broadcast_message(identity: Annotated[str, Depends(get_current_identit
     :param identity: 身份验证
     :return: Json，表示成功
     """
+    logger.info(f"收到广播请求，即将广播 SyncConfig 事件，{identity}")
     await manager.broadcast("SyncConfig")
     return {"status": 200, "message": "SyncConfig"}
 
