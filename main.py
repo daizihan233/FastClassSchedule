@@ -5,7 +5,7 @@ from typing import Annotated
 
 import toml
 import uvicorn
-from fastapi import FastAPI, HTTPException, status, Depends
+from fastapi import FastAPI, HTTPException, status, Depends, WebSocket, WebSocketDisconnect
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from loguru import logger
 
@@ -14,6 +14,7 @@ from utils import weather
 
 app = FastAPI()
 security = HTTPBasic()
+websocket_clients = []
 
 CONFIG_PATH = "config.toml"
 DEFAULT_CONFIG = """\
@@ -63,6 +64,23 @@ logger.add(
 if not pathlib.Path("./data/").exists():
     pathlib.Path("./data/").mkdir()
 
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: list[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        self.active_connections.remove(websocket)
+
+    async def broadcast(self, message: str):
+        for connection in self.active_connections:
+            await connection.send_text(message)
+
+manager = ConnectionManager()
+
 logger.success(
 """\
 FastClassSchedule 启动成功
@@ -75,7 +93,7 @@ ______        _    _____ _                _____      _              _       _
 """
 )
 
-def get_current_username(
+def get_current_identity(
     credentials: Annotated[HTTPBasicCredentials, Depends(security)],
 ):
     current_username_bytes = credentials.username.encode("utf8")
@@ -160,9 +178,28 @@ def get_schedule(
         )
     }
 
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            logger.info(f"Received data: {data}")
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+
+
+@app.post("/api/broadcast")
+async def broadcast_message(identity: Annotated[str, Depends(get_current_identity)]):
+    """
+    广播消息
+    :param identity: 身份验证
+    :return: Json，表示成功
+    """
+    await manager.broadcast("SyncConfig")
+    return {"status": 200, "message": "SyncConfig"}
 
 
 if __name__ == '__main__':
     uvicorn.run(app, host=config.server.host, port=config.server.port)
-
 
