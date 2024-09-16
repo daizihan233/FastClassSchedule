@@ -107,6 +107,7 @@ def get_current_identity(
         current_password_bytes, correct_password_bytes
     )
     if not (is_correct_username and is_correct_password):
+        logger.warning(f"收到广播请求，但密码或用户名错误：{credentials.username}:{credentials.password}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"status": 401, "message": "Incorrect password"},
