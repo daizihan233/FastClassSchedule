@@ -207,7 +207,7 @@ async def websocket_endpoint(websocket: WebSocket, school: str, grade: int, clas
         logger.info(f"来自 {school} 学校 {grade} 级 {class_number} 班的 WebSocket 连接断开")
         if not websocket_clients[(school, grade)].active_connections:
             del websocket_clients[(school, grade)]
-            logger.info(f"来自 {school} 学校 {grade} 级没有存活的 WebSocket 连接，已清除该连接管理器")
+            logger.info(f"现在 {school} 学校 {grade} 级没有存活的 WebSocket 连接，已清除该连接管理器")
 
 
 @app.post("/api/broadcast/{school}/{grade}/{class_number}")
