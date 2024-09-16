@@ -197,12 +197,17 @@ async def websocket_endpoint(websocket: WebSocket, school: str, grade: int, clas
     except KeyError:
         websocket_clients[(school, grade)] = ConnectionManager()
         await websocket_clients[(school, grade)].connect(websocket)
+    logger.info(f"来自 {school} 学校 {grade} 级 {class_number} 班的 WebSocket 连接建立")
     try:
         while True:
             data = await websocket.receive_text()
             logger.info(f"Received data: {data}")
     except WebSocketDisconnect:
         websocket_clients[(school, grade)].disconnect(websocket)
+        logger.info(f"来自 {school} 学校 {grade} 级 {class_number} 班的 WebSocket 连接断开")
+        if not websocket_clients[(school, grade)].active_connections:
+            del websocket_clients[(school, grade)]
+            logger.info(f"来自 {school} 学校 {grade} 级没有存活的 WebSocket 连接，已清除该连接管理器")
 
 
 @app.post("/api/broadcast/{school}/{grade}/{class_number}")
