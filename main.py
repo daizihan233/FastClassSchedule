@@ -201,9 +201,6 @@ async def websocket_endpoint(websocket: WebSocket, school: str, grade: int, clas
         while True:
             data = await websocket.receive_text()
             logger.info(f"Received data: {data}")
-            if data == "ping":
-                await websocket.send_text("pong")
-                logger.info(f"收到来自 {school} 学校 {grade} 级 {class_number} 班的 ping 包，回复 pong")
     except WebSocketDisconnect:
         websocket_clients[(school, grade)].disconnect(websocket)
 
