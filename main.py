@@ -14,7 +14,6 @@ from utils import weather
 
 app = FastAPI()
 security = HTTPBasic()
-websocket_clients = []
 
 CONFIG_PATH = "config.toml"
 DEFAULT_CONFIG = """\
@@ -83,7 +82,7 @@ class ConnectionManager:
         for connection in self.active_connections:
             await connection.send_text(message)
 
-manager = ConnectionManager()
+websocket_clients: dict[tuple[str, int], ConnectionManager] = {}
 
 logger.success(
 """\
@@ -183,29 +182,49 @@ def get_schedule(
         )
     }
 
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    await manager.connect(websocket)
+@app.websocket("/ws/{school}/{grade}/{class_number}")
+async def websocket_endpoint(websocket: WebSocket, school: str, grade: int, class_number: int):
+    """
+    WebSocket 连接
+    :param websocket: WebSocket 对象
+    :param school: 学校编号 / 名称
+    :param grade: 年级
+    :param class_number: 班级
+    :return:
+    """
+    try:
+        await websocket_clients[(school, grade)].connect(websocket)
+    except KeyError:
+        websocket_clients[(school, grade)] = ConnectionManager()
+        await websocket_clients[(school, grade)].connect(websocket)
     try:
         while True:
             data = await websocket.receive_text()
             logger.info(f"Received data: {data}")
             if data == "ping":
-                await manager.send_personal_message("pong", websocket)
-                logger.info(f"收到来自 {websocket.client.host} 的 ping 包，回复 pong")
+                await websocket.send_text("pong")
+                logger.info(f"收到来自 {school} 学校 {grade} 级 {class_number} 班的 ping 包，回复 pong")
     except WebSocketDisconnect:
-        manager.disconnect(websocket)
+        websocket_clients[(school, grade)].disconnect(websocket)
 
 
-@app.post("/api/broadcast")
-async def broadcast_message(identity: Annotated[str, Depends(get_current_identity)]):
+@app.post("/api/broadcast/{school}/{grade}/{class_number}")
+async def broadcast_message(
+        identity: Annotated[str, Depends(get_current_identity)],
+        school: str,
+        grade: int,
+        class_number: int
+):
     """
     广播消息
     :param identity: 身份验证
+    :param school: 学校编号 / 名称
+    :param grade: 年级
+    :param class_number: 班级
     :return: Json，表示成功
     """
-    logger.info(f"收到广播请求，即将广播 SyncConfig 事件，{identity}")
-    await manager.broadcast("SyncConfig")
+    logger.info(f"收到来自 {school} 学校 {grade} 级 {class_number} 班的广播请求，即将向级部广播 SyncConfig 事件，{identity}")
+    await websocket_clients[(school, grade)].broadcast("SyncConfig")
     return {"status": 200, "message": "SyncConfig"}
 
 
