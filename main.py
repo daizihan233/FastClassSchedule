@@ -218,12 +218,12 @@ async def websocket_endpoint(websocket: WebSocket, school: str, grade: int, clas
         )
         if now.time() < class_finish_time and not websocket_clients[(school, grade)].get_class_object(websocket).debug:
             try:
-                statistic["websocket_disconnect"][(school, grade, class_number)] += 1
+                statistic["websocket_disconnect"][f'{school}_{grade}_{class_number}'] += 1
             except KeyError:
-                statistic["websocket_disconnect"][(school, grade, class_number)] = 1
+                statistic["websocket_disconnect"][f'{school}_{grade}_{class_number}'] = 1
             logger.info(
                 f"现在 {school} 学校 {grade} 级 {class_number} 班还未放学，但连接异常断开，"
-                f"本班级今日已异常断开 {statistic['websocket_disconnect'][(school, grade, class_number)]} 次"
+                f"本班级今日已异常断开 {statistic['websocket_disconnect'][f'{school}_{grade}_{class_number}']} 次"
             )
         websocket_clients[(school, grade)].disconnect(websocket)
         logger.info(f"来自 {school} 学校 {grade} 级 {class_number} 班的 WebSocket 连接断开")
