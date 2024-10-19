@@ -1,10 +1,13 @@
+import datetime
 import json
 import pathlib
 import secrets
+from contextlib import asynccontextmanager
 from typing import Annotated
 
 import toml
 import uvicorn
+from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI, HTTPException, status, Depends, WebSocket, WebSocketDisconnect
 from fastapi.responses import ORJSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -16,7 +19,10 @@ from utils.ws import ConnectionManager
 
 app = FastAPI()
 security = HTTPBasic()
-
+statistic = {
+    "weather_error": 0,  # 天气 API 响应错误次数（不含重试次数）
+    "websocket_disconnect": {}   # WebSocket 连接异常断开次数
+}
 CONFIG_PATH = "config.toml"
 DEFAULT_CONFIG = """\
 [apikey]
@@ -35,49 +41,9 @@ file = "logs/app.log"
 rotation = "00:00"
 retention = "14 days"
 """
-if not pathlib.Path(CONFIG_PATH).exists():
-    pathlib.Path(CONFIG_PATH).touch()
-    pathlib.Path(CONFIG_PATH).write_text(DEFAULT_CONFIG)
-    logger.error("配置文件已生成，请填写相关配置再运行")
-    exit(1)
-CONFIG_JSON = toml.load(CONFIG_PATH)
-try:
-    config = utils_config.Config(
-        apikey=utils_config.ApiKey(**CONFIG_JSON["apikey"]),
-        secret=utils_config.Secret(**CONFIG_JSON["secret"]),
-        server=utils_config.Server(**CONFIG_JSON["server"]),
-        log=utils_config.Log(**CONFIG_JSON["log"]),
-    )
-except TypeError as e:
-    logger.exception(
-        f"配置文件可能缺少或存在过多字段，这可能是由于升级所致，您也可以删除并重新生成配置文件：{e}",
-        exc_info=True
-    )
-    exit(1)
-del DEFAULT_CONFIG, CONFIG_PATH, CONFIG_JSON
-logger.add(
-    config.log.file,
-    level=config.log.level,
-    rotation=config.log.rotation,
-    retention=config.log.retention
-)
-
-if not pathlib.Path("./data/").exists():
-    pathlib.Path("./data/").mkdir()
-
 websocket_clients: dict[tuple[str, int], ConnectionManager] = {}
+scheduler = BackgroundScheduler()
 
-logger.success(
-"""\
-FastClassSchedule 启动成功
-______        _    _____ _                _____      _              _       _      
-|  ____|      | |  / ____| |              / ____|    | |            | |     | |     
-| |__ __ _ ___| |_| |    | | __ _ ___ ___| (___   ___| |__   ___  __| |_   _| | ___ 
-|  __/ _` / __| __| |    | |/ _` / __/ __|\___ \ / __| '_ \ / _ \/ _` | | | | |/ _ \\
-| | | (_| \__ \ |_| |____| | (_| \__ \__ \____) | (__| | | |  __/ (_| | |_| | |  __/
-|_|  \__,_|___/\__|\_____|_|\__,_|___/___/_____/ \___|_| |_|\___|\__,_|\__,_|_|\___|
-"""
-)
 
 def get_current_identity(
     credentials: Annotated[HTTPBasicCredentials, Depends(security)],
@@ -100,6 +66,41 @@ def get_current_identity(
             headers={"WWW-Authenticate": "Basic"},
         )
     return f"{credentials.username}:{credentials.password}"
+
+
+def reset_statistic():
+    global statistic
+    statistic = {
+        "weather_error": 0,  # 天气 API 响应错误次数（不含重试次数）
+        "websocket_disconnect": {}  # WebSocket 连接异常断开次数
+    }
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    scheduler.add_job(reset_statistic, "cron", hour=0, minute=0)
+    logger.add(
+        config.log.file,
+        level=config.log.level,
+        rotation=config.log.rotation,
+        retention=config.log.retention
+    )
+    logger.success(
+        """\
+        FastClassSchedule 启动成功
+        ______        _    _____ _                _____      _              _       _      
+        |  ____|      | |  / ____| |              / ____|    | |            | |     | |     
+        | |__ __ _ ___| |_| |    | | __ _ ___ ___| (___   ___| |__   ___  __| |_   _| | ___ 
+        |  __/ _` / __| __| |    | |/ _` / __/ __|\___ \ / __| '_ \ / _ \/ _` | | | | |/ _ \\
+        | | | (_| \__ \ |_| |____| | (_| \__ \__ \____) | (__| | | |  __/ (_| | |_| | |  __/
+        |_|  \__,_|___/\__|\_____|_|\__,_|___/___/_____/ \___|_| |_|\___|\__,_|\__,_|_|\___|
+        """
+    )
+    if not pathlib.Path("./data/").exists():
+        pathlib.Path("./data/").mkdir()
+
+    yield
+
 
 @app.get("/", response_class=ORJSONResponse)
 async def root():
@@ -129,6 +130,7 @@ async def weather_province_name(name: str, province: str = None):
             return ORJSONResponse({"temp": 404, "weat": "不存在"})
         except Exception as err:
             logger.exception(f"获取天气信息失败: {err}", exc_info=True)
+    statistic['weather_error'] += 1
     logger.error(f"获取 {province}/{name} 的天气信息失败，超过最大重试次数")
     raise HTTPException(
         status_code=status.HTTP_502_BAD_GATEWAY,
@@ -178,10 +180,14 @@ async def websocket_endpoint(websocket: WebSocket, school: str, grade: int, clas
     :return:
     """
     try:
-        await websocket_clients[(school, grade)].connect(websocket)
+        await websocket_clients[(school, grade)].connect(
+            websocket, school, grade, class_number
+        )
     except KeyError:
         websocket_clients[(school, grade)] = ConnectionManager()
-        await websocket_clients[(school, grade)].connect(websocket)
+        await websocket_clients[(school, grade)].connect(
+            websocket, school, grade, class_number
+        )
     logger.info(f"来自 {school} 学校 {grade} 级 {class_number} 班的 WebSocket 连接建立")
     try:
         while True:
@@ -193,6 +199,31 @@ async def websocket_endpoint(websocket: WebSocket, school: str, grade: int, clas
         if not websocket_clients[(school, grade)].active_connections:
             del websocket_clients[(school, grade)]
             logger.info(f"现在 {school} 学校 {grade} 级没有存活的 WebSocket 连接，已清除该连接管理器")
+        schedule = {
+            **json.loads(
+                pathlib.Path(f"./data/{school}/{grade}/timetable.json").read_text()
+            ),
+            **json.loads(
+                pathlib.Path(f"./data/{school}/{grade}/{class_number}/schedule.json").read_text()
+            )
+        }
+        now = datetime.datetime.now()
+        class_finish_time = datetime.time().fromisoformat(
+            schedule["timetable"][
+                schedule["daily_class"][
+                    now.isoweekday() % 7  # 星期日为 0，星期六为 6
+                    ]["timetable"]
+            ].split("-")[0]
+        )
+        if now.time() < class_finish_time and not websocket_clients[(school, grade)].get_class_object(websocket).debug:
+            try:
+                statistic["websocket_disconnect"][(school, grade, class_number)] += 1
+            except KeyError:
+                statistic["websocket_disconnect"][(school, grade, class_number)] = 1
+            logger.info(
+                f"现在 {school} 学校 {grade} 级 {class_number} 班还未放学，但连接异常断开，"
+                f"本班级今日已异常断开 {statistic['websocket_disconnect'][(school, grade, class_number)]} 次"
+            )
 
 
 @app.post("/api/broadcast/{school}/{grade}/{class_number}")
@@ -215,6 +246,35 @@ async def broadcast_message(
     return {"status": 200, "message": "SyncConfig"}
 
 
+@app.get("/api/statistic", response_class=ORJSONResponse)
+def get_statistic():
+    """
+    获取统计信息
+    :return: Json，表示统计信息
+    """
+    return ORJSONResponse(statistic)
+
+
 if __name__ == '__main__':
+    if not pathlib.Path(CONFIG_PATH).exists():
+        pathlib.Path(CONFIG_PATH).touch()
+        pathlib.Path(CONFIG_PATH).write_text(DEFAULT_CONFIG)
+        logger.error("配置文件已生成，请填写相关配置再运行")
+        exit(1)
+    CONFIG_JSON = toml.load(CONFIG_PATH)
+    try:
+        config = utils_config.Config(
+            apikey=utils_config.ApiKey(**CONFIG_JSON["apikey"]),
+            secret=utils_config.Secret(**CONFIG_JSON["secret"]),
+            server=utils_config.Server(**CONFIG_JSON["server"]),
+            log=utils_config.Log(**CONFIG_JSON["log"]),
+        )
+    except TypeError as e:
+        logger.exception(
+            f"配置文件可能缺少或存在过多字段，这可能是由于升级所致，您也可以删除并重新生成配置文件：{e}",
+            exc_info=True
+        )
+        exit(1)
+    del DEFAULT_CONFIG, CONFIG_PATH, CONFIG_JSON
     uvicorn.run(app, host=config.server.host, port=config.server.port)
 
