@@ -114,7 +114,7 @@ def get_current_identity(
         logger.warning(f"收到广播请求，但密码或用户名错误：{credentials.username}:{credentials.password}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"status": 401, "message": "Incorrect password"},
+            detail="密码错误",
             headers={"WWW-Authenticate": "Basic"},
         )
     return f"{credentials.username}:{credentials.password}"
@@ -150,7 +150,7 @@ async def weather_province_name(name: str, province: str = None):
     logger.error(f"获取 {province}/{name} 的天气信息失败，超过最大重试次数")
     raise HTTPException(
         status_code=status.HTTP_502_BAD_GATEWAY,
-        detail={"temp": 502, "weat": "异常"}
+        detail="获取天气信息失败，超过最大重试次数，可能是上游服务器异常，或是本服务器存在网络波动"
     )
 
 
