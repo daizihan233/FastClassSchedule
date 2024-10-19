@@ -221,7 +221,7 @@ async def websocket_endpoint(websocket: WebSocket, school: str, grade: int, clas
                 statistic["websocket_disconnect"][f'{school}_{grade}_{class_number}'] += 1
             except KeyError:
                 statistic["websocket_disconnect"][f'{school}_{grade}_{class_number}'] = 1
-            logger.info(
+            logger.warning(
                 f"现在 {school} 学校 {grade} 级 {class_number} 班还未放学，但连接异常断开，"
                 f"本班级今日已异常断开 {statistic['websocket_disconnect'][f'{school}_{grade}_{class_number}']} 次"
             )
