@@ -21,7 +21,7 @@ from utils.ws import ConnectionManager
 security = HTTPBasic()
 statistic = {
     "weather_error": 0,  # 天气 API 响应错误次数（不含重试次数）
-    "websocket_disconnect": {}   # WebSocket 连接异常断开次数
+    "websocket_disconnect": {},   # 各班 WebSocket 连接异常断开次数
 }
 CONFIG_PATH = "config.toml"
 DEFAULT_CONFIG = """\
@@ -303,7 +303,11 @@ def get_statistic():
     return ORJSONResponse(
         {
             **statistic,
-            **websocket_clients_list
+            **websocket_clients_list,
+            **{
+                "websocket_disconnect_count": sum(statistic["websocket_disconnect"].values()),
+                "clients_count": len(websocket_clients_list["clients"])
+            }
         }
     )
 
