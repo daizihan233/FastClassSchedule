@@ -14,6 +14,7 @@ class Secret:
 class Server:
     host: str
     port: int
+    domain: list[str]
 
 @dataclass
 class Log:

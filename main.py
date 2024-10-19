@@ -12,6 +12,7 @@ from fastapi import FastAPI, HTTPException, status, Depends, WebSocket, WebSocke
 from fastapi.responses import ORJSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from loguru import logger
+from fastapi.middleware.cors import CORSMiddleware
 
 from utils import config as utils_config
 from utils import weather
@@ -33,6 +34,8 @@ token = "YOUR_SECRET_TOKEN"
 [server]
 host = "0.0.0.0"
 port = 8114
+    
+    
 
 [log]
 level = "INFO"
@@ -42,6 +45,27 @@ retention = "14 days"
 """
 websocket_clients: dict[tuple[str, int], ConnectionManager] = {}
 scheduler = BackgroundScheduler()
+
+if not pathlib.Path(CONFIG_PATH).exists():
+    pathlib.Path(CONFIG_PATH).touch()
+    pathlib.Path(CONFIG_PATH).write_text(DEFAULT_CONFIG)
+    logger.error("配置文件已生成，请填写相关配置再运行")
+    exit(1)
+CONFIG_JSON = toml.load(CONFIG_PATH)
+try:
+    config = utils_config.Config(
+        apikey=utils_config.ApiKey(**CONFIG_JSON["apikey"]),
+        secret=utils_config.Secret(**CONFIG_JSON["secret"]),
+        server=utils_config.Server(**CONFIG_JSON["server"]),
+        log=utils_config.Log(**CONFIG_JSON["log"]),
+    )
+except TypeError as e:
+    logger.exception(
+        f"配置文件可能缺少或存在过多字段，这可能是由于升级所致，您也可以删除并重新生成配置文件：{e}",
+        exc_info=True
+    )
+    exit(1)
+del DEFAULT_CONFIG, CONFIG_PATH, CONFIG_JSON
 
 
 def get_current_identity(
@@ -104,7 +128,17 @@ async def lifespan(_: FastAPI):
     yield
     scheduler.shutdown()
 
+
+origins = config.server.domain
 app = FastAPI(lifespan=lifespan)
+# noinspection PyTypeChecker
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.get("/", response_class=ORJSONResponse)
 async def root():
@@ -275,25 +309,5 @@ def get_statistic():
 
 
 if __name__ == '__main__':
-    if not pathlib.Path(CONFIG_PATH).exists():
-        pathlib.Path(CONFIG_PATH).touch()
-        pathlib.Path(CONFIG_PATH).write_text(DEFAULT_CONFIG)
-        logger.error("配置文件已生成，请填写相关配置再运行")
-        exit(1)
-    CONFIG_JSON = toml.load(CONFIG_PATH)
-    try:
-        config = utils_config.Config(
-            apikey=utils_config.ApiKey(**CONFIG_JSON["apikey"]),
-            secret=utils_config.Secret(**CONFIG_JSON["secret"]),
-            server=utils_config.Server(**CONFIG_JSON["server"]),
-            log=utils_config.Log(**CONFIG_JSON["log"]),
-        )
-    except TypeError as e:
-        logger.exception(
-            f"配置文件可能缺少或存在过多字段，这可能是由于升级所致，您也可以删除并重新生成配置文件：{e}",
-            exc_info=True
-        )
-        exit(1)
-    del DEFAULT_CONFIG, CONFIG_PATH, CONFIG_JSON
     uvicorn.run(app, host=config.server.host, port=config.server.port)
 
