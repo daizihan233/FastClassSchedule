@@ -17,7 +17,6 @@ from utils import config as utils_config
 from utils import weather
 from utils.ws import ConnectionManager
 
-app = FastAPI()
 security = HTTPBasic()
 statistic = {
     "weather_error": 0,  # 天气 API 响应错误次数（不含重试次数）
@@ -78,13 +77,19 @@ def reset_statistic():
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    scheduler.add_job(reset_statistic, "cron", hour=0, minute=0)
     logger.add(
         config.log.file,
         level=config.log.level,
         rotation=config.log.rotation,
         retention=config.log.retention
     )
+    logger.info("程序加载中：添加定时任务 (1/3)")
+    scheduler.add_job(reset_statistic, "cron", hour=0, minute=0)
+    logger.info("程序加载中：启动定时任务 (2/3)")
+    scheduler.start()
+    logger.info("程序加载中：寻找工作目录 (3/3)")
+    if not pathlib.Path("./data/").exists():
+        pathlib.Path("./data/").mkdir()
     logger.success(
         """\
         FastClassSchedule 启动成功
@@ -96,11 +101,10 @@ async def lifespan(_: FastAPI):
         |_|  \__,_|___/\__|\_____|_|\__,_|___/___/_____/ \___|_| |_|\___|\__,_|\__,_|_|\___|
         """
     )
-    if not pathlib.Path("./data/").exists():
-        pathlib.Path("./data/").mkdir()
-
     yield
+    scheduler.shutdown()
 
+app = FastAPI(lifespan=lifespan)
 
 @app.get("/", response_class=ORJSONResponse)
 async def root():
