@@ -32,6 +32,9 @@ class ConnectionManager:
 
     def disconnect(self, websocket: WebSocket):
         self.active_connections.remove(websocket)
+        self.class_map.remove(
+            (self.ws_map[websocket].school, self.ws_map[websocket].grade, self.ws_map[websocket].class_number)
+        )
         self.ws_map.pop(websocket)
 
     @staticmethod
