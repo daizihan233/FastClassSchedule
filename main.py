@@ -213,11 +213,13 @@ async def websocket_endpoint(websocket: WebSocket, school: str, grade: int, clas
         }
         now = datetime.datetime.now()
         class_finish_time = datetime.time().fromisoformat(
-            schedule["timetable"][
-                schedule["daily_class"][
-                    now.isoweekday() % 7  # 星期日为 0，星期六为 6
+            list(
+                schedule["timetable"][
+                    schedule["daily_class"][
+                        now.isoweekday() % 7  # 星期日为 0，星期六为 6
                     ]["timetable"]
-            ].split("-")[0]
+                ].keys()
+            )[-1].split("-")[0]
         )
         if now.time() < class_finish_time and not websocket_clients[(school, grade)].get_class_object(websocket).debug:
             try:
