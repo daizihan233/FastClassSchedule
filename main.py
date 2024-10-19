@@ -258,18 +258,18 @@ def get_statistic():
     获取统计信息
     :return: Json，表示统计信息
     """
-    websocket_clients_list = []
+    websocket_clients_list = {"clients": []}
     for (school, grade), manager in websocket_clients.items():
         for client in manager.active_connections:
             if manager.get_class_object(client).debug:
                 continue
-            websocket_clients_list.append(
+            websocket_clients_list["clients"].append(
                 f"{school} 学校 {grade} 级 {manager.get_class_object(client).class_number} 班"
             )
     return ORJSONResponse(
         {
-            *statistic,
-            *websocket_clients_list
+            **statistic,
+            **websocket_clients_list
         }
     )
 
