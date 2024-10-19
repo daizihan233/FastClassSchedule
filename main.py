@@ -6,6 +6,7 @@ from typing import Annotated
 import toml
 import uvicorn
 from fastapi import FastAPI, HTTPException, status, Depends, WebSocket, WebSocketDisconnect
+from fastapi.responses import ORJSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from loguru import logger
 
@@ -118,13 +119,13 @@ def get_current_identity(
         )
     return f"{credentials.username}:{credentials.password}"
 
-@app.get("/")
+@app.get("/", response_class=ORJSONResponse)
 async def root():
-    return {"message": "Hello World"}
+    return ORJSONResponse({"message": "Hello World"})
 
 
-@app.get("/api/weather/{province}/{name}")
-@app.get("/api/weather/{name}")
+@app.get("/api/weather/{province}/{name}", response_class=ORJSONResponse)
+@app.get("/api/weather/{name}", response_class=ORJSONResponse)
 async def weather_province_name(name: str, province: str = None):
     """
     获取指定城市的对应信息（当存在不同省份同名城市时使用）
@@ -140,10 +141,10 @@ async def weather_province_name(name: str, province: str = None):
                 key=config.apikey.weather
             )
             logger.info(f"获取 {province}/{name} 的天气信息，T: {resp['now']['temp']}, W: {resp['now']['text']}")
-            return {"temp": resp['now']['temp'], "weat": resp['now']['text']}
+            return ORJSONResponse({"temp": resp['now']['temp'], "weat": resp['now']['text']})
         except KeyError:
             logger.error(f"不存在 {province}/{name} ")
-            return {"temp": 404, "weat": "不存在"}
+            return ORJSONResponse({"temp": 404, "weat": "不存在"})
         except Exception as err:
             logger.exception(f"获取天气信息失败: {err}", exc_info=True)
     logger.error(f"获取 {province}/{name} 的天气信息失败，超过最大重试次数")
@@ -153,7 +154,7 @@ async def weather_province_name(name: str, province: str = None):
     )
 
 
-@app.get("/{school}/{grade}/{class_number}")
+@app.get("/{school}/{grade}/{class_number}", response_class=ORJSONResponse)
 def get_schedule(
         school: str,
         grade: int,
@@ -167,20 +168,22 @@ def get_schedule(
     :return: 相应的课表配置文件
     """
     logger.info(f"获取 {school} 学校 {grade} 级 {class_number} 班的配置文件")
-    return {
-        **json.loads(
-            pathlib.Path(f"./data/{school}/{grade}/subjects.json").read_text()
-        ),
-        **json.loads(
-            pathlib.Path(f"./data/{school}/{grade}/timetable.json").read_text()
-        ),
-        **json.loads(
-            pathlib.Path(f"./data/{school}/{grade}/{class_number}/config.json").read_text()
-        ),
-        **json.loads(
-            pathlib.Path(f"./data/{school}/{grade}/{class_number}/schedule.json").read_text()
-        )
-    }
+    return ORJSONResponse(
+        {
+            **json.loads(
+                pathlib.Path(f"./data/{school}/{grade}/subjects.json").read_text()
+            ),
+            **json.loads(
+                pathlib.Path(f"./data/{school}/{grade}/timetable.json").read_text()
+            ),
+            **json.loads(
+                pathlib.Path(f"./data/{school}/{grade}/{class_number}/config.json").read_text()
+            ),
+            **json.loads(
+                pathlib.Path(f"./data/{school}/{grade}/{class_number}/schedule.json").read_text()
+            )
+        }
+    )
 
 @app.websocket("/ws/{school}/{grade}/{class_number}")
 async def websocket_endpoint(websocket: WebSocket, school: str, grade: int, class_number: int):
