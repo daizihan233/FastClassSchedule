@@ -9,11 +9,12 @@ import toml
 import uvicorn
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI, HTTPException, status, Depends, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from loguru import logger
-from fastapi.middleware.cors import CORSMiddleware
 
+from utils import ci
 from utils import config as utils_config
 from utils import weather
 from utils.ws import ConnectionManager
@@ -34,14 +35,17 @@ token = "YOUR_SECRET_TOKEN"
 [server]
 host = "0.0.0.0"
 port = 8114
-    
-    
 
 [log]
 level = "INFO"
 file = "logs/app.log"
 rotation = "00:00"
 retention = "14 days"
+
+[ci]
+kind = "jenkins"
+url = "https://example.com/job/ElectronClassSchedule"
+filename = "release.zip"
 """
 websocket_clients: dict[tuple[str, int], ConnectionManager] = {}
 scheduler = BackgroundScheduler()
@@ -58,6 +62,7 @@ try:
         secret=utils_config.Secret(**CONFIG_JSON["secret"]),
         server=utils_config.Server(**CONFIG_JSON["server"]),
         log=utils_config.Log(**CONFIG_JSON["log"]),
+        ci=utils_config.CI(**CONFIG_JSON["ci"])
     )
 except TypeError as e:
     logger.exception(
@@ -310,6 +315,15 @@ def get_statistic():
             }
         }
     )
+
+
+@app.get("/api/update")
+async def api_update():
+    match config.ci.kind:
+        case "jenkins":
+            return await ci.get_from_jenkins(config.ci.url, config.ci.filename)
+
+
 
 
 if __name__ == '__main__':

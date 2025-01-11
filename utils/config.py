@@ -24,8 +24,15 @@ class Log:
     retention: str
 
 @dataclass
+class CI:
+    kind: typing.Literal["jenkins"]
+    url: str
+    filename: str
+
+@dataclass
 class Config:
     apikey: ApiKey
     secret: Secret
     server: Server
     log: Log
+    ci: CI
