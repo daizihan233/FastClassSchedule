@@ -8,6 +8,7 @@ from fastapi import Depends, WebSocket, WebSocketDisconnect
 from fastapi.responses import ORJSONResponse
 from loguru import logger
 
+from routers.web.statistic import statistic
 from utils.verify import get_current_identity
 from utils.ws import ConnectionManager
 

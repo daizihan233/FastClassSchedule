@@ -1,7 +1,10 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import ORJSONResponse
+from loguru import logger
 
+from routers.web.statistic import statistic
 from utils import weather
+from utils.config import config
 
 router = APIRouter()
 
