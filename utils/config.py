@@ -41,8 +41,8 @@ class Config:
     log: Log
     ci: CI
 
-DEFAULT_CONFIG = """\
-[apikey]
+DEFAULT_CONFIG = \
+"""[apikey]
 weather = "YOUR_API_KEY"
 
 [secret]
