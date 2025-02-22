@@ -8,13 +8,11 @@ from fastapi import Depends, WebSocket, WebSocketDisconnect
 from fastapi.responses import ORJSONResponse
 from loguru import logger
 
-from routers.web.statistic import statistic
+from routers.web.statistic import statistic, websocket_clients
 from utils.verify import get_current_identity
 from utils.ws import ConnectionManager
 
 router = APIRouter()
-
-websocket_clients: dict[tuple[str, int], ConnectionManager] = {}
 
 @router.get("/{school}/{grade}/{class_number}", response_class=ORJSONResponse)
 def get_schedule(

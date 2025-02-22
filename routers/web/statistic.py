@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 from fastapi.responses import ORJSONResponse
 
-from routers.client.schedule import websocket_clients
+from utils.ws import ConnectionManager
 
 router = APIRouter()
 
@@ -9,6 +9,7 @@ statistic = {
     "weather_error": 0,  # 天气 API 响应错误次数（不含重试次数）
     "websocket_disconnect": {},   # 各班 WebSocket 连接异常断开次数
 }
+websocket_clients: dict[tuple[str, int], ConnectionManager] = {}
 
 def reset_statistic():
     global statistic
