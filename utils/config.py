@@ -51,6 +51,7 @@ token = "YOUR_SECRET_TOKEN"
 [server]
 host = "0.0.0.0"
 port = 8114
+domain=["https://manager.example.com"]
 
 [log]
 level = "INFO"
@@ -60,7 +61,7 @@ retention = "14 days"
 
 [ci]
 kind = "jenkins"
-url = "https://example.com/job/ElectronClassSchedule"
+url = "https://ci.example.com/job/ElectronClassSchedule"
 filename = "release.zip"
 """
 
