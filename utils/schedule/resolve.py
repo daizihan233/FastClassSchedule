@@ -3,7 +3,7 @@ from loguru import logger
 from utils.calc import weeks, from_str_to_date
 
 
-async def resolve_week_cycle(schedule: dict):
+async def resolve_week_cycle(schedule: dict) -> dict:
     """
     处理单双周的逻辑
     :param schedule: 课表原始数据
