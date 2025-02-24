@@ -9,13 +9,14 @@ from fastapi.responses import ORJSONResponse
 from loguru import logger
 
 from routers.web.statistic import statistic, websocket_clients
+from utils.schedule.resolve import resolve_week_cycle
 from utils.verify import get_current_identity
 from utils.ws import ConnectionManager
 
 router = APIRouter()
 
 @router.get("/{school}/{grade}/{class_number}", response_class=ORJSONResponse)
-def get_schedule(
+async def get_schedule(
         school: str,
         grade: int,
         class_number: int
@@ -29,20 +30,22 @@ def get_schedule(
     """
     logger.info(f"获取 {school} 学校 {grade} 级 {class_number} 班的配置文件")
     return ORJSONResponse(
-        {
-            **json.loads(
-                pathlib.Path(f"./data/{school}/{grade}/subjects.json").read_text()
-            ),
-            **json.loads(
-                pathlib.Path(f"./data/{school}/{grade}/timetable.json").read_text()
-            ),
-            **json.loads(
-                pathlib.Path(f"./data/{school}/{grade}/{class_number}/config.json").read_text()
-            ),
-            **json.loads(
-                pathlib.Path(f"./data/{school}/{grade}/{class_number}/schedule.json").read_text()
-            )
-        }
+        await resolve_week_cycle(
+            {
+                **json.loads(
+                    pathlib.Path(f"./data/{school}/{grade}/subjects.json").read_text()
+                ),
+                **json.loads(
+                    pathlib.Path(f"./data/{school}/{grade}/timetable.json").read_text()
+                ),
+                **json.loads(
+                    pathlib.Path(f"./data/{school}/{grade}/{class_number}/config.json").read_text()
+                ),
+                **json.loads(
+                    pathlib.Path(f"./data/{school}/{grade}/{class_number}/schedule.json").read_text()
+                )
+            }
+        )
     )
 
 @router.websocket("/ws/{school}/{grade}/{class_number}")
