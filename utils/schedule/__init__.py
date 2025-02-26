@@ -1,4 +1,4 @@
-import resolve
+from . import resolve
 
 async def run_resolve(schedule: dict) -> dict:
     """

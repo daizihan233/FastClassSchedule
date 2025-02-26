@@ -1,1 +1,1 @@
-import statistic
+from . import statistic
