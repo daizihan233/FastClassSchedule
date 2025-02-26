@@ -9,7 +9,7 @@ from fastapi.responses import ORJSONResponse
 from loguru import logger
 
 from routers.web.statistic import statistic, websocket_clients
-from utils.schedule.resolve import resolve_week_cycle
+from utils.schedule import run_all
 from utils.verify import get_current_identity
 from utils.ws import ConnectionManager
 
@@ -30,7 +30,7 @@ async def get_schedule(
     """
     logger.info(f"获取 {school} 学校 {grade} 级 {class_number} 班的配置文件")
     return ORJSONResponse(
-        await resolve_week_cycle(
+        await run_all(
             {
                 **json.loads(
                     pathlib.Path(f"./data/{school}/{grade}/subjects.json").read_text()
