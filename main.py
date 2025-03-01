@@ -69,6 +69,7 @@ app.include_router(routers.client.schedule.router)
 app.include_router(routers.client.update.router)
 app.include_router(routers.client.weather.router)
 app.include_router(routers.web.statistic.router)
+app.include_router(routers.web.config.router)
 
 @app.get("/", response_class=ORJSONResponse)
 async def root():
