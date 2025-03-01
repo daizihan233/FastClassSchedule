@@ -1,10 +1,23 @@
+import pathlib
+
+import orjson
 from fastapi import APIRouter
 from fastapi.responses import ORJSONResponse
 
 from utils.path import discovery_path
-from utils.ws import ConnectionManager
 
 router = APIRouter()
+
+@router.get("/web/config/{school}/{grade}/subjects", response_class=ORJSONResponse)
+def get_subjects(school: str, grade: str):
+    subjects: dict = orjson.loads(pathlib.Path(f"./data/{school}/{grade}/subjects.json").read_text())['subject_name']
+    return ORJSONResponse(
+        {
+            'abbr':[{'text': x} for x in subjects.keys()],
+            'fullName': [{'text': x} for x in subjects.values()]
+        }
+    )
+
 
 @router.get("/web/menu")
 async def get_menu():
