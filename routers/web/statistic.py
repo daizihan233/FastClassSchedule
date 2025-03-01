@@ -18,7 +18,7 @@ def reset_statistic():
         "websocket_disconnect": {}  # WebSocket 连接异常断开次数
     }
 
-@router.get("/api/statistic", response_class=ORJSONResponse)
+@router.get("/web/statistic", response_class=ORJSONResponse)
 def get_statistic():
     """
     获取统计信息
