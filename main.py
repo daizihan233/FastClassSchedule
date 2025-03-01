@@ -8,8 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
 from loguru import logger
 
-from routers.client import schedule, update, weather
-from routers.web import statistic
+import routers
 from utils.config import config
 
 scheduler = BackgroundScheduler()
@@ -22,11 +21,11 @@ async def lifespan(_: FastAPI):
         rotation=config.log.rotation,
         retention=config.log.retention
     )
-    logger.info("程序加载中：添加定时任务 (7/9)")
-    scheduler.add_job(statistic.reset_statistic, "cron", hour=0, minute=0)
-    logger.info("程序加载中：启动定时任务 (8/9)")
+    logger.info("程序加载中：添加定时任务 (4/6)")
+    scheduler.add_job(routers.web.statistic.reset_statistic, "cron", hour=0, minute=0)
+    logger.info("程序加载中：启动定时任务 (5/6)")
     scheduler.start()
-    logger.info("程序加载中：设置工作目录 (9/9)")
+    logger.info("程序加载中：设置工作目录 (6/6)")
     pathlib.Path("./data/").mkdir(parents=True, exist_ok=True)
     logger.success(
         r"""
@@ -54,9 +53,9 @@ async def lifespan(_: FastAPI):
         """
     )
 
-logger.info("程序加载中：初始化 FastAPI (1/9)")
+logger.info("程序加载中：初始化 FastAPI (1/6)")
 app = FastAPI(lifespan=lifespan)
-logger.info("程序加载中：设置跨域 (2/9)")
+logger.info("程序加载中：设置跨域 (2/6)")
 # noinspection PyTypeChecker
 app.add_middleware(
     CORSMiddleware,
@@ -65,14 +64,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-logger.info("程序加载中：导入课程表相关 API (3/9)")
-app.include_router(schedule.router)
-logger.info("程序加载中：导入更新相关 API (4/9)")
-app.include_router(update.router)
-logger.info("程序加载中：导入天气相关 API (5/9)")
-app.include_router(weather.router)
-logger.info("程序加载中：导入统计相关 API (6/9)")
-app.include_router(statistic.router)
+logger.info("程序加载中：导入课程表相关 API (3/6)")
+app.include_router(routers.client.schedule.router)
+app.include_router(routers.client.update.router)
+app.include_router(routers.client.weather.router)
+app.include_router(routers.web.statistic.router)
 
 @app.get("/", response_class=ORJSONResponse)
 async def root():
