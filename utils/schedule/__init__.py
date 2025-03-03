@@ -1,4 +1,12 @@
-from . import resolve
+from . import resolve, fix
+
+async def run_fix(schedule: dict) -> dict:
+    """
+    自动修复课表数据
+    :param schedule: 课表原始数据
+    :return: 修复完成后的数据
+    """
+    return await fix.fix_wrong_timetable(schedule)
 
 async def run_resolve(schedule: dict) -> dict:
     """
@@ -14,4 +22,6 @@ async def run_all(schedule: dict) -> dict:
     :param schedule: 课表原始数据
     :return: 处理完成后的数据
     """
-    return await run_resolve(schedule)
+    return await run_fix(
+        await run_resolve(schedule)
+    )
