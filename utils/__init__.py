@@ -5,3 +5,4 @@ from . import config
 from . import verify
 from . import weather
 from . import ws
+from . import globalvar

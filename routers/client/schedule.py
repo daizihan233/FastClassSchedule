@@ -8,7 +8,8 @@ from fastapi import Depends, WebSocket, WebSocketDisconnect
 from fastapi.responses import ORJSONResponse
 from loguru import logger
 
-from routers.web.statistic import statistic, websocket_clients
+from routers.web.statistic import statistic
+from utils.globalvar import websocket_clients
 from utils.schedule import run_all
 from utils.verify import get_current_identity
 from utils.ws import ConnectionManager
@@ -123,5 +124,8 @@ async def broadcast_message(
     :return: Json，表示成功
     """
     logger.info(f"收到来自 {school} 学校 {grade} 级 {class_number} 班的广播请求，即将向级部广播 SyncConfig 事件，{identity}")
-    await websocket_clients[(school, grade)].broadcast("SyncConfig")
+    try:
+        await websocket_clients[(school, grade)].broadcast("SyncConfig")
+    except KeyError:
+        logger.warning(f"没有找到对应的websocket连接：{school} {grade}")
     return {"status": 200, "message": "SyncConfig"}

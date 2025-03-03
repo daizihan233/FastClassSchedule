@@ -1,10 +1,16 @@
+import json
 import pathlib
+from typing import Annotated
 
 import orjson
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, Body
 from fastapi.responses import ORJSONResponse
+from loguru import logger
 
+from utils.globalvar import websocket_clients
 from utils.path import discovery_path
+from utils.schedule.dataclasses import Schedule
+from utils.verify import get_current_identity
 
 router = APIRouter()
 
@@ -15,6 +21,62 @@ def get_subjects(school: str, grade: str):
         {
             'abbr':[{'text': x} for x in subjects.keys()],
             'fullName': [{'text': x} for x in subjects.values()]
+        }
+    )
+
+@router.get("/web/config/{school}/{grade}/{cls}/schedule", response_class=ORJSONResponse)
+def get_schedule(school: str, grade: str, cls: str):
+    schedule: dict = orjson.loads(pathlib.Path(f"./data/{school}/{grade}/{cls}/schedule.json").read_text())
+    for index_d, day in enumerate(schedule['daily_class']):
+        for index_i, item in enumerate(day['classList']):
+            if isinstance(item, str):
+                schedule['daily_class'][index_d]['classList'][index_i] = [
+                    schedule['daily_class'][index_d]['classList'][index_i]
+                ]
+    return ORJSONResponse(
+        schedule
+    )
+
+@router.put("/web/config/{school}/{grade}/{cls}/schedule", response_class=ORJSONResponse)
+async def update_schedule(
+    school: str, grade: int, cls: int,
+    identity: Annotated[str, Depends(get_current_identity)],
+    model: Schedule = Body(embed=True),
+):
+    logger.info(f"收到更新课表请求：{identity}")
+    mjson = model.model_dump()
+    schedule: dict = mjson.copy()
+    logger.debug(mjson)
+    for index_d, day in enumerate(schedule['daily_class']):
+        for index_i, item in enumerate(day['classList']):
+            if len(item) == 1:
+                schedule['daily_class'][index_d]['classList'][index_i] = schedule['daily_class'][index_d][
+                    'classList'
+                ][index_i][0]
+    logger.debug(schedule)
+    text = json.dumps(schedule, indent=2, ensure_ascii=False)
+    pathlib.Path(f"./data/{school}/{grade}/{cls}/schedule.json").write_text(text)
+    logger.info(f"更新课表：\n{text}")
+    try:
+        await websocket_clients[(school, grade)].broadcast("SyncConfig")
+    except KeyError:
+        logger.warning(f"没有找到对应的websocket连接：{school} {grade}")
+    return ORJSONResponse(
+        {'status': 200}
+    )
+
+@router.get("/web/config/{school}/{grade}/timetable/options", response_class=ORJSONResponse)
+def get_timetable_options(school: str, grade: str):
+    timetable: dict[dict] = orjson.loads(
+        pathlib.Path(f"./data/{school}/{grade}/timetable.json").read_text()
+    )['timetable']
+
+    return ORJSONResponse(
+        {
+            'options': [
+                {'label': x, 'value': x, 'need': max([v for v in timetable[x].values() if isinstance(v, int)])}
+                for x in timetable.keys()
+            ]
         }
     )
 
