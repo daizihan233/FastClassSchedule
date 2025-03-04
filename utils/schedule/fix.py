@@ -19,5 +19,5 @@ async def fix_wrong_timetable(schedule: dict) -> dict:
             if len(item['classList']) > dic[item['timetable']]:
                 result['daily_class'][index]['classList'] = item['classList'][:dic[item['timetable']]]
             else:
-                result['daily_class'][index]['classList'].append('课')
+                result['daily_class'][index]['classList'].extend(['课'] * (dic[item['timetable']] - len(item['classList'])))
     return result
