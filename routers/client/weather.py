@@ -22,6 +22,7 @@ async def weather_province_name(name: str, province: str = None):
             resp = await weather.weather_lookup_by_name(
                 name=name,
                 adm=province,
+                host=config.apikey.apihost,
                 key=config.apikey.weather
             )
             logger.info(f"获取 {province}/{name} 的天气信息，T: {resp['now']['temp']}, W: {resp['now']['text']}")

@@ -9,6 +9,7 @@ from loguru import logger
 @dataclass
 class ApiKey:
     weather: str
+    apihost: str
 
 @dataclass
 class Secret:
