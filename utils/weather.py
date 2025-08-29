@@ -12,9 +12,11 @@ async def city_lookup(name, key, host, adm=None):
     """
     async with aiohttp.ClientSession() as session:
         async with session.get(
-                f"https://{host}/v2/city/lookup?"
-                f"location={name}&"
-                f"key={key}" + (f"&adm={adm}" if adm else "")
+            f"https://{host}/geo/v2/city/lookup?"
+            f"location={name}&" + (f"&adm={adm}" if adm else ""),
+            headers={
+                'X-QW-Api-Key': key
+            }
         ) as response:
             return (await response.json())["location"][0]["id"]
 
@@ -29,9 +31,11 @@ async def weather_lookup(location, key, host):
     """
     async with (aiohttp.ClientSession() as session):
         async with session.get(
-                f"https://{host}/v7/weather/now?"
-                f"location={location}&"
-                f"key={key}"
+            f"https://{host}/v7/weather/now?"
+            f"location={location}",
+            headers={
+                'X-QW-Api-Key': key
+            }
         ) as response:
             return await response.json()
 
