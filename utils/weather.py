@@ -45,7 +45,7 @@ async def weather_lookup_by_name(name, key, host, adm=None):
     :return: API 所返回的 JSON 数据
     """
     return await weather_lookup(
-        location=await city_lookup(name, key, adm),
+        location=await city_lookup(name, key, host, adm),
         host=host,
         key=key
     )
