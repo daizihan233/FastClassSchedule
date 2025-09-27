@@ -25,11 +25,21 @@ async def weather_province_name(name: str, province: str = None):
                 host=config.apikey.apihost,
                 key=config.apikey.weather
             )
-            logger.info(f"获取 {province}/{name} 的天气信息，T: {resp['now']['temp']}, W: {resp['now']['text']}")
-            return ORJSONResponse({"temp": resp['now']['temp'], "weat": resp['now']['text']})
+            warn_resp = await weather.weather_warning_lookup_by_name(
+                name=name,
+                adm=province,
+                host=config.apikey.apihost,
+                key=config.apikey.weather
+            )
+            warn = '；'.join([x['text'] for x in warn_resp['warning']]).replace('\n', '')
+            brief_warn = '；'.join([x['title'] for x in warn_resp['warning']]).replace('\n', '')
+            temp = resp['now']['temp']
+            weat = resp['now']['text']
+            logger.info(f"获取 {province}/{name} 的天气信息，T: {temp}, W: {weat}, Warning: {warn}, Brief: {brief_warn}")
+            return ORJSONResponse({"temp": temp, "weat": weat, 'warn': warn, 'brief_warn': brief_warn})
         except KeyError:
             logger.error(f"不存在 {province}/{name} ")
-            return ORJSONResponse({"temp": 404, "weat": "不存在"})
+            return ORJSONResponse({"temp": 404, "weat": "不存在", "warning": '', 'brief_warn': ''}, status_code=status.HTTP_404_NOT_FOUND)
         except Exception as err:
             logger.exception(f"获取天气信息失败: {err}", exc_info=True)
     statistic['weather_error'] += 1

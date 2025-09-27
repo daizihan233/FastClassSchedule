@@ -28,6 +28,8 @@ class Timetable(BaseModel):
 
 class Setting(BaseModel):
     countdown_target: str
+    weather_alert_override: bool
+    weather_alert_brief: bool
     week_display: bool
     banner_text: str
     css_style: Dict[str, str]
