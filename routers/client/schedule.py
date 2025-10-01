@@ -45,7 +45,10 @@ async def get_schedule(
                 **json.loads(
                     pathlib.Path(f"./data/{school}/{grade}/{class_number}/schedule.json").read_text()
                 )
-            }
+            },
+            school=school,
+            grade=grade,
+            class_number=class_number
         )
     )
 

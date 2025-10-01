@@ -5,7 +5,7 @@ from utils.calc import weeks, from_str_to_date
 # 新增导入
 import datetime
 import json
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List, Tuple
 from utils.db import fetch_records
 from utils.schedule.dataclasses import AutorunType
 import copy
@@ -29,18 +29,72 @@ async def resolve_week_cycle(schedule: dict) -> dict:
     return resp
 
 
-async def resolve_compensation(schedule: dict) -> dict:
+# 作用域匹配与“更小作用域”判定：返回匹配到的最大特异度（段数），不匹配返回 -1
+# ALL -> 0；"39" -> 1；"39/2023" -> 2；"39/2023/1" -> 3
+def _scope_specificity(scope_entry: str, school: str, grade: int | str, class_number: int | str) -> int:
+    try:
+        s = str(scope_entry).strip()
+    except Exception:
+        return -1
+    if not s:
+        return -1
+    if s.upper() == 'ALL':
+        return 0
+    parts = s.split('/')
+    ctx = [str(school), str(grade), str(class_number)]
+    if len(parts) > len(ctx):
+        return -1
+    for idx, p in enumerate(parts):
+        if p != ctx[idx]:
+            return -1
+    return len(parts)
+
+
+def _row_applicable_specificity(row: Dict[str, Any], school: str, grade: int | str, class_number: int | str) -> int:
+    scopes_raw = row.get('scope')
+    # fetch_records 返回的 scope 是 JSON 字符串（或已解码），需要容错
+    scopes: List[str] = []
+    if isinstance(scopes_raw, list):
+        scopes = [str(x) for x in scopes_raw]
+    elif isinstance(scopes_raw, str):
+        try:
+            parsed = json.loads(scopes_raw)
+            if isinstance(parsed, list):
+                scopes = [str(x) for x in parsed]
+            else:
+                # 兼容非列表的历史数据，按单个作用域处理
+                scopes = [str(scopes_raw)]
+        except Exception:
+            scopes = [str(scopes_raw)]
+    else:
+        # 兜底：无 scope 时视为不匹配
+        return -1
+
+    best = -1
+    for s in scopes:
+        spec = _scope_specificity(s, school, grade, class_number)
+        if spec > best:
+            best = spec
+    return best
+
+
+async def resolve_compensation(schedule: dict, *, school: str, grade: int | str, class_number: int | str) -> dict:
     """
     应用“调休自动任务”：当今日等于某条调休规则的 date 时，将今日的日课表替换为 useDate 所在星期的配置。
-    规则来源：utils.db.records 表中 etype=0 的记录；优先级按 level 降序（fetch_records 已排序）。
+    多条规则同时生效时，全部处理；若发生冲突，使用优先级(level)更大的规则；若优先级相同，选择作用域更小（特异度更大）的规则。
+    :param schedule: 合并后的课表数据
+    :param school: 学校标识（字符串）
+    :param grade: 年级
+    :param class_number: 班级
+    :return: 应用调休规则后的课表
     """
     today = datetime.date.today()
     rows = fetch_records()
     if not rows:
         return schedule
 
-    # 选择第一条今日生效或直接命中的调休规则
-    chosen_rule: Optional[Dict[str, Any]] = None
+    # 收集所有“今天”生效，且与当前 (school/grade/class) 匹配的规则
+    candidates: List[Tuple[int, int, Dict[str, Any], Dict[str, Any]]] = []  # (level, specificity, row, rule)
     for r in rows:
         try:
             if int(r.get('etype')) != int(AutorunType.COMPENSATION):
@@ -51,36 +105,44 @@ async def resolve_compensation(schedule: dict) -> dict:
             d = datetime.date.fromisoformat(str(rule.get('date')))
             if d != today:
                 continue
-            chosen_rule = rule
-            break
+            spec = _row_applicable_specificity(r, school, grade, class_number)
+            if spec < 0:
+                # 该记录的作用域与当前上下文不匹配
+                continue
+            level = int(r.get('level', 0) or 0)
+            candidates.append((level, spec, r, rule))
         except Exception:
+            # 忽略损坏记录
             continue
 
-    if not chosen_rule:
+    if not candidates:
         return schedule
 
-    try:
-        use_date = datetime.date.fromisoformat(str(chosen_rule.get('useDate')))
-    except Exception as e:
-        logger.warning(f"调休规则 useDate 无效，忽略：{e}")
-        return schedule
+    # 为满足“全部处理+冲突按优先级/特异度解决”，我们按 (level ASC, specificity ASC) 顺序依次应用；
+    # 因此越高优先级、越具体的规则会在最后覆盖之前的结果。
+    candidates.sort(key=lambda x: (x[0], x[1]))
 
-    # daily_class 索引：项目中周日索引为 0，周一为 1，... 周六为 6
+    new_schedule = copy.deepcopy(schedule)
     today_idx = today.isoweekday() % 7
-    src_idx = use_date.isoweekday() % 7
+    for level, spec, _row, rule in candidates:
+        try:
+            use_date = datetime.date.fromisoformat(str(rule.get('useDate')))
+        except Exception as e:
+            logger.warning(f"调休规则 useDate 无效，忽略该条：{e}")
+            continue
+        src_idx = use_date.isoweekday() % 7
+        try:
+            new_schedule['daily_class'][today_idx]['classList'] = copy.deepcopy(
+                new_schedule['daily_class'][src_idx]['classList']
+            )
+            if 'timetable' in new_schedule['daily_class'][src_idx]:
+                new_schedule['daily_class'][today_idx]['timetable'] = new_schedule['daily_class'][src_idx]['timetable']
+            logger.info(
+                f"应用调休：{today.isoformat()} 使用 {use_date.isoformat()} 的课表 (src_idx={src_idx} -> today_idx={today_idx}) | "
+                f"level={level}, specificity={spec}"
+            )
+        except Exception as e:
+            logger.error(f"应用调休失败(跳过该条)：{e}")
+            continue
 
-    try:
-        new_schedule = copy.deepcopy(schedule)
-        # 替换今日的课表和作息引用
-        new_schedule['daily_class'][today_idx]['classList'] = copy.deepcopy(
-            schedule['daily_class'][src_idx]['classList']
-        )
-        if 'timetable' in schedule['daily_class'][src_idx]:
-            new_schedule['daily_class'][today_idx]['timetable'] = schedule['daily_class'][src_idx]['timetable']
-        logger.info(
-            f"应用调休：{today.isoformat()} 使用 {use_date.isoformat()} 的课表 (src_idx={src_idx} -> today_idx={today_idx})"
-        )
-        return new_schedule
-    except Exception as e:
-        logger.error(f"应用调休失败：{e}")
-        return schedule
+    return new_schedule
