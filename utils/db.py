@@ -87,7 +87,7 @@ def _calc_hashid(etype: int, scope: List[str], level: int, parameters: Dict[str,
     payload = json.dumps({'etype': etype, 'scope': scope, 'level': level, 'parameters': parameters},
                          ensure_ascii=False, sort_keys=True)
     seed = f"{etype}|{level}|{payload}"
-    return hashlib.sha1(seed.encode('utf-8')).hexdigest()[:16]
+    return hashlib.sha256(seed.encode('utf-8')).hexdigest()[:16]
 
 
 def upsert_record(etype: int, scope: List[str], level: int, parameters: Dict[str, Any],
