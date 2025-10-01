@@ -10,6 +10,7 @@ from loguru import logger
 
 import routers
 from utils.config import config
+from utils.db import init_db
 
 scheduler = BackgroundScheduler()
 
@@ -21,11 +22,13 @@ async def lifespan(_: FastAPI):
         rotation=config.log.rotation,
         retention=config.log.retention
     )
-    logger.info("程序加载中：添加定时任务 (4/6)")
+    logger.info("程序加载中：初始化 SQLite 数据库")
+    init_db('./data/records.db')
+    logger.info("程序加载中：添加定时任务")
     scheduler.add_job(routers.web.statistic.reset_statistic, "cron", hour=0, minute=0)
-    logger.info("程序加载中：启动定时任务 (5/6)")
+    logger.info("程序加载中：启动定时任务")
     scheduler.start()
-    logger.info("程序加载中：设置工作目录 (6/6)")
+    logger.info("程序加载中：设置工作目录")
     pathlib.Path("./data/").mkdir(parents=True, exist_ok=True)
     logger.success(
         r"""
@@ -53,9 +56,9 @@ async def lifespan(_: FastAPI):
         """
     )
 
-logger.info("程序加载中：初始化 FastAPI (1/6)")
+logger.info("程序加载中：初始化 FastAPI")
 app = FastAPI(lifespan=lifespan)
-logger.info("程序加载中：设置跨域 (2/6)")
+logger.info("程序加载中：设置跨域")
 # noinspection PyTypeChecker
 app.add_middleware(
     CORSMiddleware,
@@ -64,7 +67,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-logger.info("程序加载中：导入课程表相关 API (3/6)")
+logger.info("程序加载中：导入课程表相关 API")
 app.include_router(routers.client.schedule.router)
 app.include_router(routers.client.update.router)
 app.include_router(routers.client.weather.router)
@@ -79,4 +82,3 @@ async def root():
 
 if __name__ == '__main__':
     uvicorn.run(app, host=config.server.host, port=config.server.port)
-

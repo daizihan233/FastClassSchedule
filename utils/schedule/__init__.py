@@ -1,4 +1,5 @@
 from . import resolve, fix
+from utils.db import refresh_statuses
 
 async def run_fix(schedule: dict) -> dict:
     """
@@ -14,7 +15,11 @@ async def run_resolve(schedule: dict) -> dict:
     :param schedule: 课表原始数据
     :return: 解析完成后的数据
     """
-    return await resolve.resolve_week_cycle(schedule)
+    # 每次解析前刷新数据库状态，保证客户端拉取配置时状态最新
+    refresh_statuses()
+    s = await resolve.resolve_week_cycle(schedule)
+    s = await resolve.resolve_compensation(s)
+    return s
 
 async def run_all(schedule: dict) -> dict:
     """

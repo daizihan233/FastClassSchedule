@@ -1,3 +1,5 @@
+from enum import IntEnum
+
 from pydantic import BaseModel
 from typing import List, Dict, Union
 
@@ -33,3 +35,9 @@ class Setting(BaseModel):
     week_display: bool
     banner_text: str
     css_style: Dict[str, str]
+
+class AutorunType(IntEnum):
+    COMPENSATION = 0  # 调休
+    TIMETABLE = 1  # 作息表调整
+    SCHEDULE = 2  # 课程表调整
+    ALL = 3  # 作息表、课程表均调整

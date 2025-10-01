@@ -6,3 +6,5 @@ from . import verify
 from . import weather
 from . import ws
 from . import globalvar
+from . import db
+from . import autorun
