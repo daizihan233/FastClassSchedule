@@ -1,5 +1,6 @@
 from . import resolve, fix
 from utils.db import refresh_statuses
+import asyncio
 
 async def run_fix(schedule: dict) -> dict:
     """
@@ -19,7 +20,7 @@ async def run_resolve(schedule: dict, *, school: str, grade: int | str, class_nu
     :return: 解析完成后的数据
     """
     # 每次解析前刷新数据库状态，保证客户端拉取配置时状态最新
-    refresh_statuses()
+    await asyncio.to_thread(refresh_statuses)
     s = await resolve.resolve_week_cycle(schedule)
     s = await resolve.resolve_compensation(s, school=school, grade=grade, class_number=class_number)
     return s

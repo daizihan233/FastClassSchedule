@@ -1,11 +1,10 @@
 from loguru import logger
+import asyncio
 
 
-async def fix_wrong_timetable(schedule: dict) -> dict:
+def _fix_wrong_timetable_sync(schedule: dict) -> dict:
     """
-    处理错误的作息表
-    :param schedule: 课表原始数据
-    :return: 处理后的课表数据
+    同步实现：处理错误的作息表
     """
     result = schedule.copy()
     dic = {
@@ -21,3 +20,12 @@ async def fix_wrong_timetable(schedule: dict) -> dict:
             else:
                 result['daily_class'][index]['classList'].extend(['课'] * (dic[item['timetable']] - len(item['classList'])))
     return result
+
+
+async def fix_wrong_timetable(schedule: dict) -> dict:
+    """
+    处理错误的作息表（异步包装：在线程池中执行以避免阻塞事件循环）
+    :param schedule: 课表原始数据
+    :return: 处理后的课表数据
+    """
+    return await asyncio.to_thread(_fix_wrong_timetable_sync, schedule)
