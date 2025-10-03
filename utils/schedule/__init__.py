@@ -8,7 +8,10 @@ async def run_fix(schedule: dict) -> dict:
     :param schedule: 课表原始数据
     :return: 修复完成后的数据
     """
-    return await fix.fix_wrong_timetable(schedule)
+    # 先按默认格式校验/填充，再修正作息与课时数不匹配
+    s = await fix.ensure_default_shape(schedule)
+    s = await fix.fix_wrong_timetable(s)
+    return s
 
 async def run_resolve(schedule: dict, *, school: str, grade: int | str, class_number: int | str) -> dict:
     """
