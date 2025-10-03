@@ -136,6 +136,73 @@ async def put_compensation(
     refresh_statuses()
     return {"status": 200, "id": hid}
 
+@router.put('/web/autorun/timetable')
+async def put_timetable(
+    identity: Annotated[str, Depends(get_current_identity)],
+    payload: Dict[str, Any] = Body(...)
+):
+    """
+    新增/更新一条作息表调整自动任务。
+    Body: { "type": 1, "scope": string[], "priority": number, "content": { "date": "YYYY-MM-DD", "timetableId": string, "id?": string } }
+    示例：{ "type": 1, "scope": ["39/2023", "39/2023/1"], "priority": 5, "content": { "date": "2025-10-12", "timetableId": "运动会" } }
+    支持编辑：可在 content.id 或顶层 id 传入记录 hashid 进行替换。
+    """
+    try:
+        etype = int(payload.get('type', int(AutorunType.TIMETABLE)))
+        if etype != int(AutorunType.TIMETABLE):
+            raise ValueError('仅支持作息表调整类型')
+        scope = payload.get('scope') or ['ALL']
+        if not isinstance(scope, list):
+            raise ValueError('scope 必须为列表')
+        level = int(payload.get('priority', 0))
+        content = payload.get('content') or {}
+        if not isinstance(content, dict):
+            raise ValueError('content 必须为对象')
+        date_str = str(content.get('date'))
+        timetable_id = content.get('timetableId')
+        if not isinstance(timetable_id, str) or not timetable_id:
+            raise ValueError('timetableId 必须为非空字符串')
+        # 校验日期
+        datetime.date.fromisoformat(date_str)
+        parameters = {"rule": {"date": date_str, "timetableId": timetable_id}}
+        # 可选编辑 id（支持顶层或 content 内）
+        hashid: Optional[str] = None
+        pid = payload.get('id')
+        cid = content.get('id')
+        if isinstance(pid, str) and pid:
+            hashid = pid
+        elif isinstance(cid, str) and cid:
+            hashid = cid
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f'无效参数: {e}')
+
+    # 查重逻辑（同一天同一作息表仅允许一条），编辑时跳过自身
+    rows = fetch_records()
+    for r in rows:
+        try:
+            if int(r.get('etype')) != etype:
+                continue
+        except Exception:
+            continue
+        if hashid and r.get('hashid') == hashid:
+            continue
+        params_text = r.get('parameters')
+        if isinstance(params_text, str) and params_text:
+            try:
+                parsed = json.loads(params_text)
+                rule = parsed.get('rule') if 'rule' in parsed else parsed
+                if isinstance(rule, dict):
+                    if str(rule.get('date')) == date_str and str(rule.get('timetableId')) == timetable_id:
+                        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='该作息表调整规则已存在')
+            except Exception:
+                continue
+
+    logger.info(f"收到新增/更新作息表任务请求：{identity} {parameters} edit_id={hashid}")
+    hid, _ = upsert_record(etype=etype, scope=scope, level=level, parameters=parameters, hashid=hashid)
+    # 刷新一次状态，方便前端立刻看到“生效中/待生效”
+    refresh_statuses()
+    return {"status": 200, "id": hid}
+
 @router.delete('/web/autorun/{hashid}')
 def delete_autorun_record(hashid: str, identity: Annotated[str, Depends(get_current_identity)]):
     logger.info(f"收到删除自动任务记录请求：{identity} 删除 {hashid}")

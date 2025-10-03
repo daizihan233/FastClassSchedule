@@ -140,6 +140,18 @@ def _derive_status_for_record(etype: int, parameters: Dict[str, Any], today: Opt
         if today == d:
             return 1
         return 2
+    # 扩展：etype=1（作息表调整）同样按 date 比较
+    if etype == 1 and isinstance(parameters, dict):
+        rule = parameters.get('rule') if isinstance(parameters.get('rule'), dict) else parameters
+        try:
+            d = datetime.date.fromisoformat(str(rule.get('date')))
+        except Exception:
+            return 0
+        if today < d:
+            return 0
+        if today == d:
+            return 1
+        return 2
     return 0
 
 
