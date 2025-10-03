@@ -116,6 +116,20 @@ async def put_compensation(
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f'无效参数: {e}')
 
+    # 查重逻辑
+    rows = fetch_records()
+    for r in rows:
+        params_text = r.get('parameters')
+        if isinstance(params_text, str) and params_text:
+            try:
+                parsed = json.loads(params_text)
+                rule = parsed.get('rule') if 'rule' in parsed else parsed
+                if isinstance(rule, dict):
+                    if rule.get('date') == date_str and rule.get('useDate') == use_date_str:
+                        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='该调休规则已存在')
+            except Exception:
+                continue
+
     logger.info(f"收到新增调休任务请求：{identity} {parameters}")
     hid, _ = upsert_record(etype=etype, scope=scope, level=level, parameters=parameters)
     # 刷新一次状态，方便前端立刻看到“生效中/待生效”
