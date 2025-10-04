@@ -1,15 +1,14 @@
+import asyncio
+import copy
+import datetime
+import json
+from typing import Dict, Any, List, Tuple
+
 from loguru import logger
 
 from utils.calc import weeks, from_str_to_date
-
-# 新增导入
-import datetime
-import json
-import asyncio
-from typing import Optional, Dict, Any, List, Tuple
 from utils.db import fetch_records
 from utils.schedule.dataclasses import AutorunType
-import copy
 
 
 def _resolve_week_cycle_sync(schedule: dict) -> dict:
@@ -37,69 +36,12 @@ async def resolve_week_cycle(schedule: dict) -> dict:
     return await asyncio.to_thread(_resolve_week_cycle_sync, schedule)
 
 
-def _resolve_compensation_sync(schedule: dict, *, school: str, grade: int | str, class_number: int | str) -> dict:
-    """
-    同步实现：应用“调休自动任务”。
-    """
-    today = datetime.date.today()
-    rows = fetch_records()
-    if not rows:
-        return schedule
+# -------------------------- Scope helpers --------------------------
 
-    # 收集所有“今天”生效，且与当前 (school/grade/class) 匹配的规则
-    candidates: List[Tuple[int, int, Dict[str, Any], Dict[str, Any]]] = []  # (level, specificity, row, rule)
-    for r in rows:
-        try:
-            if int(r.get('etype')) != int(AutorunType.COMPENSATION):
-                continue
-            params_text = r.get('parameters')
-            params = json.loads(params_text) if isinstance(params_text, str) else (params_text or {})
-            rule = params.get('rule') if isinstance(params.get('rule'), dict) else params
-            d = datetime.date.fromisoformat(str(rule.get('date')))
-            if d != today:
-                continue
-            spec = _row_applicable_specificity(r, school, grade, class_number)
-            if spec < 0:
-                continue
-            level = int(r.get('level', 0) or 0)
-            candidates.append((level, spec, r, rule))
-        except Exception:
-            continue
-
-    if not candidates:
-        return schedule
-
-    candidates.sort(key=lambda x: (x[0], x[1]))
-
-    new_schedule = copy.deepcopy(schedule)
-    today_idx = today.isoweekday() % 7
-    for level, spec, _row, rule in candidates:
-        try:
-            use_date = datetime.date.fromisoformat(str(rule.get('useDate')))
-        except Exception as e:
-            logger.warning(f"调休规则 useDate 无效，忽略该条：{e}")
-            continue
-        src_idx = use_date.isoweekday() % 7
-        try:
-            new_schedule['daily_class'][today_idx]['classList'] = copy.deepcopy(
-                new_schedule['daily_class'][src_idx]['classList']
-            )
-            if 'timetable' in new_schedule['daily_class'][src_idx]:
-                new_schedule['daily_class'][today_idx]['timetable'] = new_schedule['daily_class'][src_idx]['timetable']
-            logger.info(
-                f"应用调休：{today.isoformat()} 使用 {use_date.isoformat()} 的课表 (src_idx={src_idx} -> today_idx={today_idx}) | "
-                f"level={level}, specificity={spec}"
-            )
-        except Exception as e:
-            logger.error(f"应用调休失败(跳过该条)：{e}")
-            continue
-
-    return new_schedule
-
-
-# 作用域匹配与“更小作用域”判定：返回匹配到的最大特异度（段数），不匹配返回 -1
-# ALL -> 0；"39" -> 1；"39/2023" -> 2；"39/2023/1" -> 3
 def _scope_specificity(scope_entry: str, school: str, grade: int | str, class_number: int | str) -> int:
+    """作用域匹配与“更小作用域”判定：返回匹配到的最大特异度（段数），不匹配返回 -1
+    ALL -> 0；"39" -> 1；"39/2023" -> 2；"39/2023/1" -> 3
+    """
     try:
         s = str(scope_entry).strip()
     except Exception:
@@ -125,10 +67,7 @@ def _row_applicable_specificity(row: Dict[str, Any], school: str, grade: int | s
     elif isinstance(scopes_raw, str):
         try:
             parsed = json.loads(scopes_raw)
-            if isinstance(parsed, list):
-                scopes = [str(x) for x in parsed]
-            else:
-                scopes = [str(scopes_raw)]
+            scopes = [str(x) for x in parsed] if isinstance(parsed, list) else [str(scopes_raw)]
         except Exception as err:
             logger.error(err)
             scopes = [str(scopes_raw)]
@@ -143,6 +82,125 @@ def _row_applicable_specificity(row: Dict[str, Any], school: str, grade: int | s
     return best
 
 
+def _decode_rule(params_text: Any) -> Dict[str, Any]:
+    if isinstance(params_text, str) and params_text:
+        try:
+            parsed = json.loads(params_text)
+        except Exception:
+            parsed = None
+    elif isinstance(params_text, dict):
+        parsed = params_text
+    else:
+        parsed = None
+    if isinstance(parsed, dict):
+        rule = parsed.get('rule') if isinstance(parsed.get('rule'), dict) else parsed
+        return rule if isinstance(rule, dict) else {}
+    return {}
+
+
+def _collect_applicable_candidates(
+    rows: List[Dict[str, Any]], *, etype: int, school: str, grade: int | str, class_number: int | str,
+    today: datetime.date
+) -> List[Tuple[int, int, Dict[str, Any]]]:
+    """
+    从记录中收集“今天”生效且作用域匹配的候选规则，返回 (level, specificity, rule) 列表。
+    """
+    candidates: List[Tuple[int, int, Dict[str, Any]]] = []
+    for r in rows:
+        try:
+            if int(r.get('etype')) != etype:
+                continue
+            rule = _decode_rule(r.get('parameters'))
+            d = datetime.date.fromisoformat(str(rule.get('date')))
+            if d != today:
+                continue
+            spec = _row_applicable_specificity(r, school, grade, class_number)
+            if spec < 0:
+                continue
+            level = int(r.get('level', 0) or 0)
+            candidates.append((level, spec, rule))
+        except Exception:
+            continue
+    candidates.sort(key=lambda x: (x[0], x[1]))
+    return candidates
+
+
+def _resolve_compensation_sync(schedule: dict, *, school: str, grade: int | str, class_number: int | str) -> dict:
+    """
+    同步实现：应用“调休自动任务”。
+    """
+    today = datetime.date.today()
+    rows = fetch_records()
+    if not rows:
+        return schedule
+
+    candidates = _collect_applicable_candidates(
+        rows, etype=int(AutorunType.COMPENSATION), school=school, grade=grade, class_number=class_number, today=today
+    )
+    if not candidates:
+        return schedule
+
+    new_schedule = copy.deepcopy(schedule)
+    today_idx = today.isoweekday() % 7
+    for level, spec, rule in candidates:
+        try:
+            use_date = datetime.date.fromisoformat(str(rule.get('useDate')))
+        except Exception as e:
+            logger.warning(f"调休规则 useDate 无效，忽略该条：{e}")
+            continue
+        src_idx = use_date.isoweekday() % 7
+        try:
+            new_schedule['daily_class'][today_idx]['classList'] = copy.deepcopy(
+                new_schedule['daily_class'][src_idx]['classList']
+            )
+            if 'timetable' in new_schedule['daily_class'][src_idx]:
+                new_schedule['daily_class'][today_idx]['timetable'] = new_schedule['daily_class'][src_idx]['timetable']
+            logger.info(
+                f"应用调休：{today.isoformat()} 使用 {use_date.isoformat()} 的课表 (src_idx={src_idx} -> today_idx={today_idx}) | "
+                f"level={level}, specificity={spec}"
+            )
+        except Exception as e:
+            logger.error(f"应用调休失败(跳过该条)：{e}")
+            continue
+
+    return new_schedule
+
+
+def _resolve_timetable_sync(schedule: dict, *, school: str, grade: int | str, class_number: int | str) -> dict:
+    """
+    同步实现：应用“作息表调整自动任务”。在规则 date 当天，将当日的 daily_class.timetable 设置为 timetableId。
+    多条规则按 (level, specificity) 排序，后应用者覆盖先应用者。
+    """
+    today = datetime.date.today()
+    rows = fetch_records()
+    if not rows:
+        return schedule
+
+    candidates = _collect_applicable_candidates(
+        rows, etype=int(AutorunType.TIMETABLE), school=school, grade=grade, class_number=class_number, today=today
+    )
+    if not candidates:
+        return schedule
+
+    new_schedule = copy.deepcopy(schedule)
+    today_idx = today.isoweekday() % 7
+    for level, spec, rule in candidates:
+        timetable_id = rule.get('timetableId')
+        if not isinstance(timetable_id, str) or not timetable_id:
+            logger.warning("作息表调整规则 timetableId 无效或为空，忽略该条")
+            continue
+        try:
+            new_schedule['daily_class'][today_idx]['timetable'] = timetable_id
+            logger.info(
+                f"应用作息表调整：{today.isoformat()} 使用 timetable='{timetable_id}' | level={level}, specificity={spec}"
+            )
+        except Exception as e:
+            logger.error(f"应用作息表调整失败(跳过该条)：{e}")
+            continue
+
+    return new_schedule
+
+
 async def resolve_compensation(schedule: dict, *, school: str, grade: int | str, class_number: int | str) -> dict:
     """
     应用“调休自动任务”——异步包装：在线程池中执行以避免阻塞事件循环
@@ -155,61 +213,6 @@ async def resolve_compensation(schedule: dict, *, school: str, grade: int | str,
     return await asyncio.to_thread(
         _resolve_compensation_sync, schedule, school=school, grade=grade, class_number=class_number
     )
-
-# 新增：作息表调整解析
-
-def _resolve_timetable_sync(schedule: dict, *, school: str, grade: int | str, class_number: int | str) -> dict:
-    """
-    同步实现：应用“作息表调整自动任务”。在规则 date 当天，将当日的 daily_class.timetable 设置为 timetableId。
-    多条规则按 (level, specificity) 排序，后应用者覆盖先应用者。
-    """
-    today = datetime.date.today()
-    rows = fetch_records()
-    if not rows:
-        return schedule
-
-    candidates: List[Tuple[int, int, Dict[str, Any], Dict[str, Any]]] = []
-    for r in rows:
-        try:
-            if int(r.get('etype')) != int(AutorunType.TIMETABLE):
-                continue
-            params_text = r.get('parameters')
-            params = json.loads(params_text) if isinstance(params_text, str) else (params_text or {})
-            rule = params.get('rule') if isinstance(params.get('rule'), dict) else params
-            d = datetime.date.fromisoformat(str(rule.get('date')))
-            if d != today:
-                continue
-            spec = _row_applicable_specificity(r, school, grade, class_number)
-            if spec < 0:
-                continue
-            level = int(r.get('level', 0) or 0)
-            candidates.append((level, spec, r, rule))
-        except Exception:
-            continue
-
-    if not candidates:
-        return schedule
-
-    candidates.sort(key=lambda x: (x[0], x[1]))
-
-    new_schedule = copy.deepcopy(schedule)
-    today_idx = today.isoweekday() % 7
-    for level, spec, _row, rule in candidates:
-        timetable_id = rule.get('timetableId')
-        if not isinstance(timetable_id, str) or not timetable_id:
-            logger.warning("作息表调整规则 timetableId 无效或为空，忽略该条")
-            continue
-        try:
-            new_schedule['daily_class'][today_idx]['timetable'] = timetable_id
-            logger.info(
-                f"应用作息表调整：{today.isoformat()} 使用 timetable='{timetable_id}' | "
-                f"level={level}, specificity={spec}"
-            )
-        except Exception as e:
-            logger.error(f"应用作息表调整失败(跳过该条)：{e}")
-            continue
-
-    return new_schedule
 
 
 async def resolve_timetable(schedule: dict, *, school: str, grade: int | str, class_number: int | str) -> dict:

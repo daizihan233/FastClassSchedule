@@ -1,11 +1,27 @@
-import sqlite3
-import os
-from typing import Optional, List, Dict, Any, Tuple
-import json
-import hashlib
 import datetime
+import hashlib
+import json
+import os
+import sqlite3
+from typing import Optional, List, Dict, Any, Tuple
 
 DB_PATH: Optional[str] = None
+
+_def_none = object()
+
+
+def _get_rule_date(parameters: Any) -> Optional[datetime.date]:
+    if not isinstance(parameters, dict):
+        return None
+    rule = parameters.get('rule', _def_none)
+    if isinstance(rule, dict):
+        target = rule
+    else:
+        target = parameters
+    try:
+        return datetime.date.fromisoformat(str(target.get('date')))
+    except Exception:
+        return None
 
 
 def init_db(db_path: str):
@@ -66,7 +82,8 @@ def fetch_records(limit: Optional[int] = None) -> List[Dict[str, Any]]:
 
     if not has_scope:
         for r in rows:
-            r['scope'] = None
+            # 维持类型为 str，便于上层统一解析为 list
+            r['scope'] = '[]'
 
     conn.close()
     return rows
@@ -120,39 +137,21 @@ def upsert_record(etype: int, scope: List[str], level: int, parameters: Dict[str
 def _derive_status_for_record(etype: int, parameters: Dict[str, Any], today: Optional[datetime.date] = None) -> int:
     """
     计算记录状态：0 待生效, 1 生效中, 2 已过期
-    当前仅实现调休(etype=0)：在 parameters = {"rule": {"date": "YYYY-MM-DD", "useDate": "YYYY-MM-DD"}}
-    的语义下：
-    - today < date: 0 待生效
-    - today == date: 1 生效中
-    - today > date: 2 已过期
-    其他类型默认 0。
+    对于 etype in (0, 1)：在 parameters = {"rule": {"date": "YYYY-MM-DD", ...}}
+    的语义下使用 date 字段判断状态；其他类型默认 0。
     """
     if today is None:
         today = datetime.date.today()
-    if etype == 0 and isinstance(parameters, dict):
-        rule = parameters.get('rule') if isinstance(parameters.get('rule'), dict) else parameters
-        try:
-            d = datetime.date.fromisoformat(str(rule.get('date')))
-        except Exception:
-            return 0
-        if today < d:
-            return 0
-        if today == d:
-            return 1
-        return 2
-    # 扩展：etype=1（作息表调整）同样按 date 比较
-    if etype == 1 and isinstance(parameters, dict):
-        rule = parameters.get('rule') if isinstance(parameters.get('rule'), dict) else parameters
-        try:
-            d = datetime.date.fromisoformat(str(rule.get('date')))
-        except Exception:
-            return 0
-        if today < d:
-            return 0
-        if today == d:
-            return 1
-        return 2
-    return 0
+    if etype not in (0, 1):
+        return 0
+    d = _get_rule_date(parameters)
+    if not d:
+        return 0
+    if today < d:
+        return 0
+    if today == d:
+        return 1
+    return 2
 
 
 def refresh_statuses(today: Optional[datetime.date] = None) -> int:

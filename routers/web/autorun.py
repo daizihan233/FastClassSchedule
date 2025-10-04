@@ -1,53 +1,131 @@
+import datetime
+import json
+from typing import Optional, Annotated, Dict, Any, List, Callable
+
 from fastapi import APIRouter, Depends, HTTPException, status, Body
 from loguru import logger
 
 from utils.calc import compensation_from_holiday, compensation_from_workday, compensation_pairs
-import datetime
-# 新增导入
-import json
-from typing import Optional, Annotated, Dict, Any
 from utils.db import fetch_records, delete_record, upsert_record, refresh_statuses
-from utils.autorun import rule_to_text
 from utils.schedule.dataclasses import AutorunType
 from utils.verify import get_current_identity
 
 router = APIRouter()
 
-def map_row(row: dict) -> dict:
-    status_map = {0: '待生效', 1: '生效中', 2: '已过期'}
-    # type 映射
-    try:
-        type_str = AutorunType(row.get('etype')).name
-    except Exception:
-        type_str = str(row.get('etype'))
 
-    # scope
-    scope_str = str(row.get('scope')) if row.get('scope') is not None else ''
+def _parse_scope(raw: Any) -> List[str]:
+    """将数据库中的 scope 字段规范化为 List[str] 返回。"""
+    if isinstance(raw, list):
+        return [str(x) for x in raw]
+    if isinstance(raw, str):
+        s = raw.strip()
+        if not s:
+            return []
+        try:
+            parsed = json.loads(s)
+            if isinstance(parsed, list):
+                return [str(x) for x in parsed]
+            return [s]
+        except Exception:
+            return [s]
+    return []
 
-    # content 由 parameters 解析并转文本
-    content_text: str = ''
-    params_text: Optional[str] = row.get('parameters')
+
+def _decode_rule_from_params(params_text: Any) -> Dict[str, Any]:
+    """从 records.parameters 字段解析出规则对象(dict)。"""
+    parsed: Any = None
     if isinstance(params_text, str) and params_text:
         try:
             parsed = json.loads(params_text)
-            if isinstance(parsed, dict):
-                rule = parsed.get('rule') if 'rule' in parsed else parsed
-                if isinstance(rule, dict):
-                    content_text = rule_to_text(rule)
-                else:
-                    content_text = str(parsed)
-            else:
-                content_text = str(parsed)
         except Exception:
-            content_text = params_text
+            parsed = None
+    elif isinstance(params_text, dict):
+        parsed = params_text
+    if isinstance(parsed, dict):
+        rule = parsed.get('rule') if isinstance(parsed.get('rule'), dict) else parsed
+        if isinstance(rule, dict):
+            return rule
+    return {}
 
+
+def _status_text(v: Any) -> str:
+    mapping = {0: '待生效', 1: '生效中', 2: '已过期'}
+    try:
+        return mapping.get(int(v), '未知')
+    except Exception:
+        return '未知'
+
+
+def _type_name(v: Any) -> str:
+    try:
+        return AutorunType(v).name
+    except Exception:
+        return str(v)
+
+
+def _extract_edit_id(payload: Dict[str, Any]) -> Optional[str]:
+    """同时支持顶层 id 与 content.id。"""
+    pid = payload.get('id')
+    if isinstance(pid, str) and pid:
+        return pid
+    content = payload.get('content') or {}
+    if isinstance(content, dict):
+        cid = content.get('id')
+        if isinstance(cid, str) and cid:
+            return cid
+    return None
+
+
+def _require_date(date_str: Any) -> str:
+    s = str(date_str)
+    try:
+        datetime.date.fromisoformat(s)
+    except Exception:
+        raise ValueError('date 必须为 ISO 格式 YYYY-MM-DD')
+    return s
+
+
+def _require_scope_list(scope_val: Any) -> List[str]:
+    if not isinstance(scope_val, list):
+        raise ValueError('scope 必须为列表')
+    return [str(x) for x in scope_val]
+
+
+def _check_duplicate(rows: List[Dict[str, Any]], *, etype: int, matcher: Callable[[Dict[str, Any]], bool],
+                     skip_id: Optional[str]):
+    for r in rows:
+        try:
+            if int(r.get('etype')) != etype:
+                continue
+        except Exception:
+            continue
+        if skip_id and r.get('hashid') == skip_id:
+            continue
+        rule = _decode_rule_from_params(r.get('parameters'))
+        try:
+            if matcher(rule):
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='规则已存在')
+        except HTTPException:
+            raise
+        except Exception:
+            continue
+
+
+def _upsert_and_refresh(*, etype: int, scope: List[str], level: int, parameters: Dict[str, Any],
+                        hashid: Optional[str]) -> Dict[str, Any]:
+    hid, _ = upsert_record(etype=etype, scope=scope, level=level, parameters=parameters, hashid=hashid)
+    refresh_statuses()
+    return {"status": 200, "id": hid}
+
+
+def map_row(row: dict) -> dict:
     return {
         'id': row.get('hashid', ''),
-        'type': type_str,
-        'scope': scope_str,
-        'content': content_text,
+        'type': _type_name(row.get('etype')),
+        'scope': _parse_scope(row.get('scope')),
+        'content': _decode_rule_from_params(row.get('parameters')),
         'priority': int(row.get('level', 0) or 0),
-        'status': status_map.get(int(row.get('status', -1)), '未知')
+        'status': _status_text(row.get('status'))
     }
 
 @router.get('/web/autorun')
@@ -59,6 +137,7 @@ def get_autorun_status():
     data = [map_row(r) for r in rows]
     return {"data": data}
 
+
 @router.get('/web/autorun/compensation/holiday/{year}/{month}/{day}')
 def get_compensation_from_holiday(year: int, month: int, day: int):
     date = datetime.date(year, month, day)
@@ -68,6 +147,7 @@ def get_compensation_from_holiday(year: int, month: int, day: int):
         "compensation": compensation.isoformat() if compensation else None
     }
 
+
 @router.get('/web/autorun/compensation/workday/{year}/{month}/{day}')
 def get_compensation_from_workday(year: int, month: int, day: int):
     date = datetime.date(year, month, day)
@@ -76,6 +156,7 @@ def get_compensation_from_workday(year: int, month: int, day: int):
         "date": date.isoformat(),
         "compensation": compensation.isoformat() if compensation else None
     }
+
 
 @router.get('/web/autorun/compensation/year/{year}')
 def get_compensation_pairs(year: int):
@@ -87,6 +168,7 @@ def get_compensation_pairs(year: int):
         ]
     }
 
+
 @router.put('/web/autorun/compensation')
 async def put_compensation(
     identity: Annotated[str, Depends(get_current_identity)],
@@ -94,47 +176,36 @@ async def put_compensation(
 ):
     """
     新增/更新一条调休自动任务。
-    请求体示例：{"type":0,"scope":["ALL"],"priority":0,"content":{"date":"2025-10-11","useDate":"2025-10-08"}}
+    Body: {"type":0,"scope":string[],"priority":number,"content":{"date":"YYYY-MM-DD","useDate":"YYYY-MM-DD"},"id?":string}
     """
     try:
         etype = int(payload.get('type', int(AutorunType.COMPENSATION)))
         if etype != int(AutorunType.COMPENSATION):
             raise ValueError('仅支持调休类型')
-        scope = payload.get('scope') or ['ALL']
-        if not isinstance(scope, list):
-            raise ValueError('scope 必须为列表')
+        scope = _require_scope_list(payload.get('scope') or ['ALL'])
         level = int(payload.get('priority', 0))
         content = payload.get('content') or {}
         if not isinstance(content, dict):
             raise ValueError('content 必须为对象')
-        date_str = str(content.get('date'))
-        use_date_str = str(content.get('useDate'))
-        # 基础校验
-        datetime.date.fromisoformat(date_str)
-        datetime.date.fromisoformat(use_date_str)
+        date_str = _require_date(content.get('date'))
+        use_date_str = _require_date(content.get('useDate'))
         parameters = {"rule": {"date": date_str, "useDate": use_date_str}}
+        edit_id = _extract_edit_id(payload)
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f'无效参数: {e}')
 
-    # 查重逻辑
+    # 查重：同一 (date, useDate)
     rows = fetch_records()
-    for r in rows:
-        params_text = r.get('parameters')
-        if isinstance(params_text, str) and params_text:
-            try:
-                parsed = json.loads(params_text)
-                rule = parsed.get('rule') if 'rule' in parsed else parsed
-                if isinstance(rule, dict):
-                    if rule.get('date') == date_str and rule.get('useDate') == use_date_str:
-                        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='该调休规则已存在')
-            except Exception:
-                continue
+    _check_duplicate(
+        rows,
+        etype=etype,
+        skip_id=edit_id,
+        matcher=lambda rule: str(rule.get('date')) == date_str and str(rule.get('useDate')) == use_date_str
+    )
 
-    logger.info(f"收到新增调休任务请求：{identity} {parameters}")
-    hid, _ = upsert_record(etype=etype, scope=scope, level=level, parameters=parameters)
-    # 刷新一次状态，方便前端立刻看到“生效中/待生效”
-    refresh_statuses()
-    return {"status": 200, "id": hid}
+    logger.info(f"收到新增/更新调休任务请求：{identity} {parameters} edit_id={edit_id}")
+    return _upsert_and_refresh(etype=etype, scope=scope, level=level, parameters=parameters, hashid=edit_id)
+
 
 @router.put('/web/autorun/timetable')
 async def put_timetable(
@@ -143,65 +214,38 @@ async def put_timetable(
 ):
     """
     新增/更新一条作息表调整自动任务。
-    Body: { "type": 1, "scope": string[], "priority": number, "content": { "date": "YYYY-MM-DD", "timetableId": string, "id?": string } }
-    示例：{ "type": 1, "scope": ["39/2023", "39/2023/1"], "priority": 5, "content": { "date": "2025-10-12", "timetableId": "运动会" } }
-    支持编辑：可在 content.id 或顶层 id 传入记录 hashid 进行替换。
+    Body: { "type": 1, "scope": string[], "priority": number, "content": { "date": "YYYY-MM-DD", "timetableId": string }, "id?": string }
     """
     try:
         etype = int(payload.get('type', int(AutorunType.TIMETABLE)))
         if etype != int(AutorunType.TIMETABLE):
             raise ValueError('仅支持作息表调整类型')
-        scope = payload.get('scope') or ['ALL']
-        if not isinstance(scope, list):
-            raise ValueError('scope 必须为列表')
+        scope = _require_scope_list(payload.get('scope') or ['ALL'])
         level = int(payload.get('priority', 0))
         content = payload.get('content') or {}
         if not isinstance(content, dict):
             raise ValueError('content 必须为对象')
-        date_str = str(content.get('date'))
+        date_str = _require_date(content.get('date'))
         timetable_id = content.get('timetableId')
         if not isinstance(timetable_id, str) or not timetable_id:
             raise ValueError('timetableId 必须为非空字符串')
-        # 校验日期
-        datetime.date.fromisoformat(date_str)
         parameters = {"rule": {"date": date_str, "timetableId": timetable_id}}
-        # 可选编辑 id（支持顶层或 content 内）
-        hashid: Optional[str] = None
-        pid = payload.get('id')
-        cid = content.get('id')
-        if isinstance(pid, str) and pid:
-            hashid = pid
-        elif isinstance(cid, str) and cid:
-            hashid = cid
+        edit_id = _extract_edit_id(payload)
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f'无效参数: {e}')
 
-    # 查重逻辑（同一天同一作息表仅允许一条），编辑时跳过自身
+    # 查重：同一 (date, timetableId)
     rows = fetch_records()
-    for r in rows:
-        try:
-            if int(r.get('etype')) != etype:
-                continue
-        except Exception:
-            continue
-        if hashid and r.get('hashid') == hashid:
-            continue
-        params_text = r.get('parameters')
-        if isinstance(params_text, str) and params_text:
-            try:
-                parsed = json.loads(params_text)
-                rule = parsed.get('rule') if 'rule' in parsed else parsed
-                if isinstance(rule, dict):
-                    if str(rule.get('date')) == date_str and str(rule.get('timetableId')) == timetable_id:
-                        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='该作息表调整规则已存在')
-            except Exception:
-                continue
+    _check_duplicate(
+        rows,
+        etype=etype,
+        skip_id=edit_id,
+        matcher=lambda rule: str(rule.get('date')) == date_str and str(rule.get('timetableId')) == timetable_id
+    )
 
-    logger.info(f"收到新增/更新作息表任务请求：{identity} {parameters} edit_id={hashid}")
-    hid, _ = upsert_record(etype=etype, scope=scope, level=level, parameters=parameters, hashid=hashid)
-    # 刷新一次状态，方便前端立刻看到“生效中/待生效”
-    refresh_statuses()
-    return {"status": 200, "id": hid}
+    logger.info(f"收到新增/更新作息表任务请求：{identity} {parameters} edit_id={edit_id}")
+    return _upsert_and_refresh(etype=etype, scope=scope, level=level, parameters=parameters, hashid=edit_id)
+
 
 @router.delete('/web/autorun/{hashid}')
 def delete_autorun_record(hashid: str, identity: Annotated[str, Depends(get_current_identity)]):
