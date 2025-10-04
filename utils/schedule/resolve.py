@@ -1,7 +1,6 @@
 import asyncio
 import copy
 import datetime
-import json
 from typing import Dict, Any, List, Tuple
 
 from loguru import logger
@@ -9,6 +8,7 @@ from loguru import logger
 from utils.calc import weeks, from_str_to_date
 from utils.db import fetch_records
 from utils.schedule.dataclasses import AutorunType
+from utils.schedule.helpers import decode_rule, row_applicable_specificity
 
 
 def _resolve_week_cycle_sync(schedule: dict) -> dict:
@@ -36,67 +36,7 @@ async def resolve_week_cycle(schedule: dict) -> dict:
     return await asyncio.to_thread(_resolve_week_cycle_sync, schedule)
 
 
-# -------------------------- Scope helpers --------------------------
-
-def _scope_specificity(scope_entry: str, school: str, grade: int | str, class_number: int | str) -> int:
-    """作用域匹配与“更小作用域”判定：返回匹配到的最大特异度（段数），不匹配返回 -1
-    ALL -> 0；"39" -> 1；"39/2023" -> 2；"39/2023/1" -> 3
-    """
-    try:
-        s = str(scope_entry).strip()
-    except Exception:
-        return -1
-    if not s:
-        return -1
-    if s.upper() == 'ALL':
-        return 0
-    parts = s.split('/')
-    ctx = [str(school), str(grade), str(class_number)]
-    if len(parts) > len(ctx):
-        return -1
-    for idx, p in enumerate(parts):
-        if p != ctx[idx]:
-            return -1
-    return len(parts)
-
-
-def _row_applicable_specificity(row: Dict[str, Any], school: str, grade: int | str, class_number: int | str) -> int:
-    scopes_raw = row.get('scope')
-    if isinstance(scopes_raw, list):
-        scopes = [str(x) for x in scopes_raw]
-    elif isinstance(scopes_raw, str):
-        try:
-            parsed = json.loads(scopes_raw)
-            scopes = [str(x) for x in parsed] if isinstance(parsed, list) else [str(scopes_raw)]
-        except Exception as err:
-            logger.error(err)
-            scopes = [str(scopes_raw)]
-    else:
-        return -1
-
-    best = -1
-    for s in scopes:
-        spec = _scope_specificity(s, school, grade, class_number)
-        if spec > best:
-            best = spec
-    return best
-
-
-def _decode_rule(params_text: Any) -> Dict[str, Any]:
-    if isinstance(params_text, str) and params_text:
-        try:
-            parsed = json.loads(params_text)
-        except Exception:
-            parsed = None
-    elif isinstance(params_text, dict):
-        parsed = params_text
-    else:
-        parsed = None
-    if isinstance(parsed, dict):
-        rule = parsed.get('rule') if isinstance(parsed.get('rule'), dict) else parsed
-        return rule if isinstance(rule, dict) else {}
-    return {}
-
+# -------------------------- Candidate collection --------------------------
 
 def _collect_applicable_candidates(
     rows: List[Dict[str, Any]], *, etype: int, school: str, grade: int | str, class_number: int | str,
@@ -110,11 +50,11 @@ def _collect_applicable_candidates(
         try:
             if int(r.get('etype')) != etype:
                 continue
-            rule = _decode_rule(r.get('parameters'))
+            rule = decode_rule(r.get('parameters'))
             d = datetime.date.fromisoformat(str(rule.get('date')))
             if d != today:
                 continue
-            spec = _row_applicable_specificity(r, school, grade, class_number)
+            spec = row_applicable_specificity(r, school, grade, class_number)
             if spec < 0:
                 continue
             level = int(r.get('level', 0) or 0)
@@ -125,10 +65,7 @@ def _collect_applicable_candidates(
     return candidates
 
 
-def _resolve_compensation_sync(schedule: dict, *, school: str, grade: int | str, class_number: int | str) -> dict:
-    """
-    同步实现：应用“调休自动任务”。
-    """
+def _prepare_compensation_context(schedule, school, grade, class_number):
     today = datetime.date.today()
     rows = fetch_records()
     if not rows:
@@ -142,6 +79,14 @@ def _resolve_compensation_sync(schedule: dict, *, school: str, grade: int | str,
 
     new_schedule = copy.deepcopy(schedule)
     today_idx = today.isoweekday() % 7
+    return candidates, new_schedule, today_idx, today
+
+
+def _resolve_compensation_sync(schedule: dict, school: str, grade: int | str, class_number: int | str) -> dict:
+    """
+    同步实现：应用“调休自动任务”。
+    """
+    candidates, new_schedule, today_idx, today = _prepare_compensation_context(schedule, school, grade, class_number)
     for level, spec, rule in candidates:
         try:
             use_date = datetime.date.fromisoformat(str(rule.get('useDate')))
@@ -171,19 +116,8 @@ def _resolve_timetable_sync(schedule: dict, *, school: str, grade: int | str, cl
     同步实现：应用“作息表调整自动任务”。在规则 date 当天，将当日的 daily_class.timetable 设置为 timetableId。
     多条规则按 (level, specificity) 排序，后应用者覆盖先应用者。
     """
-    today = datetime.date.today()
-    rows = fetch_records()
-    if not rows:
-        return schedule
+    candidates, new_schedule, today_idx, today = _prepare_compensation_context(schedule, school, grade, class_number)
 
-    candidates = _collect_applicable_candidates(
-        rows, etype=int(AutorunType.TIMETABLE), school=school, grade=grade, class_number=class_number, today=today
-    )
-    if not candidates:
-        return schedule
-
-    new_schedule = copy.deepcopy(schedule)
-    today_idx = today.isoweekday() % 7
     for level, spec, rule in candidates:
         timetable_id = rule.get('timetableId')
         if not isinstance(timetable_id, str) or not timetable_id:

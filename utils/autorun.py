@@ -1,6 +1,6 @@
 import json
 from datetime import date, datetime
-from typing import Any, Dict
+from typing import Any
 
 
 def _fmt_dt(value: Any) -> str:

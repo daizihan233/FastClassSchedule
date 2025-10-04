@@ -1,5 +1,4 @@
 import datetime
-import json
 from typing import Optional, Annotated, Dict, Any, List, Callable
 
 from fastapi import APIRouter, Depends, HTTPException, status, Body
@@ -8,44 +7,10 @@ from loguru import logger
 from utils.calc import compensation_from_holiday, compensation_from_workday, compensation_pairs
 from utils.db import fetch_records, delete_record, upsert_record, refresh_statuses
 from utils.schedule.dataclasses import AutorunType
+from utils.schedule.helpers import parse_scope_field, decode_rule
 from utils.verify import get_current_identity
 
 router = APIRouter()
-
-
-def _parse_scope(raw: Any) -> List[str]:
-    """将数据库中的 scope 字段规范化为 List[str] 返回。"""
-    if isinstance(raw, list):
-        return [str(x) for x in raw]
-    if isinstance(raw, str):
-        s = raw.strip()
-        if not s:
-            return []
-        try:
-            parsed = json.loads(s)
-            if isinstance(parsed, list):
-                return [str(x) for x in parsed]
-            return [s]
-        except Exception:
-            return [s]
-    return []
-
-
-def _decode_rule_from_params(params_text: Any) -> Dict[str, Any]:
-    """从 records.parameters 字段解析出规则对象(dict)。"""
-    parsed: Any = None
-    if isinstance(params_text, str) and params_text:
-        try:
-            parsed = json.loads(params_text)
-        except Exception:
-            parsed = None
-    elif isinstance(params_text, dict):
-        parsed = params_text
-    if isinstance(parsed, dict):
-        rule = parsed.get('rule') if isinstance(parsed.get('rule'), dict) else parsed
-        if isinstance(rule, dict):
-            return rule
-    return {}
 
 
 def _status_text(v: Any) -> str:
@@ -101,7 +66,7 @@ def _check_duplicate(rows: List[Dict[str, Any]], *, etype: int, matcher: Callabl
             continue
         if skip_id and r.get('hashid') == skip_id:
             continue
-        rule = _decode_rule_from_params(r.get('parameters'))
+        rule = decode_rule(r.get('parameters'))
         try:
             if matcher(rule):
                 raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='规则已存在')
@@ -122,8 +87,8 @@ def map_row(row: dict) -> dict:
     return {
         'id': row.get('hashid', ''),
         'type': _type_name(row.get('etype')),
-        'scope': _parse_scope(row.get('scope')),
-        'content': _decode_rule_from_params(row.get('parameters')),
+        'scope': parse_scope_field(row.get('scope')),
+        'content': decode_rule(row.get('parameters')),
         'priority': int(row.get('level', 0) or 0),
         'status': _status_text(row.get('status'))
     }
