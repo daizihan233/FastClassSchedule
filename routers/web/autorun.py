@@ -1,13 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Body
-from loguru import logger
-
-from utils.calc import compensation_from_holiday, compensation_from_workday, compensation_pairs
 import datetime
 # 新增导入
 import json
 from typing import Optional, Annotated, Dict, Any
-from utils.db import fetch_records, delete_record, upsert_record, refresh_statuses
+
+from fastapi import APIRouter, Depends, HTTPException, status, Body
+from loguru import logger
+
 from utils.autorun import rule_to_text
+from utils.calc import compensation_from_holiday, compensation_from_workday, compensation_pairs
+from utils.db import fetch_records, delete_record, upsert_record, refresh_statuses
 from utils.schedule.dataclasses import AutorunType
 from utils.verify import get_current_identity
 
@@ -44,8 +45,8 @@ def map_row(row: dict) -> dict:
     return {
         'id': row.get('hashid', ''),
         'type': type_str,
-        'scope': scope_str,
-        'content': content_text,
+        'scope': json.loads(scope_str),
+        'content': json.loads(content_text),
         'priority': int(row.get('level', 0) or 0),
         'status': status_map.get(int(row.get('status', -1)), '未知')
     }

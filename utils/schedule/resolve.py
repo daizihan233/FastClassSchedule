@@ -1,15 +1,15 @@
-from loguru import logger
-
-from utils.calc import weeks, from_str_to_date
-
+import asyncio
+import copy
 # 新增导入
 import datetime
 import json
-import asyncio
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple
+
+from loguru import logger
+
+from utils.calc import weeks, from_str_to_date
 from utils.db import fetch_records
 from utils.schedule.dataclasses import AutorunType
-import copy
 
 
 def _resolve_week_cycle_sync(schedule: dict) -> dict:
@@ -37,10 +37,7 @@ async def resolve_week_cycle(schedule: dict) -> dict:
     return await asyncio.to_thread(_resolve_week_cycle_sync, schedule)
 
 
-def _resolve_compensation_sync(schedule: dict, *, school: str, grade: int | str, class_number: int | str) -> dict:
-    """
-    同步实现：应用“调休自动任务”。
-    """
+def _prepare_compensation_context(schedule, school, grade, class_number):
     today = datetime.date.today()
     rows = fetch_records()
     if not rows:
@@ -73,6 +70,14 @@ def _resolve_compensation_sync(schedule: dict, *, school: str, grade: int | str,
 
     new_schedule = copy.deepcopy(schedule)
     today_idx = today.isoweekday() % 7
+    return today, today_idx, candidates, new_schedule
+
+
+def _resolve_compensation_sync(schedule: dict, school: str, grade: int | str, class_number: int | str) -> dict:
+    """
+    同步实现：应用“调休自动任务”。
+    """
+    today, today_idx, candidates, new_schedule = _prepare_compensation_context(schedule, school, grade, class_number)
     for level, spec, _row, rule in candidates:
         try:
             use_date = datetime.date.fromisoformat(str(rule.get('useDate')))
@@ -163,37 +168,8 @@ def _resolve_timetable_sync(schedule: dict, *, school: str, grade: int | str, cl
     同步实现：应用“作息表调整自动任务”。在规则 date 当天，将当日的 daily_class.timetable 设置为 timetableId。
     多条规则按 (level, specificity) 排序，后应用者覆盖先应用者。
     """
-    today = datetime.date.today()
-    rows = fetch_records()
-    if not rows:
-        return schedule
+    today, today_idx, candidates, new_schedule = _prepare_compensation_context(schedule, school, grade, class_number)
 
-    candidates: List[Tuple[int, int, Dict[str, Any], Dict[str, Any]]] = []
-    for r in rows:
-        try:
-            if int(r.get('etype')) != int(AutorunType.TIMETABLE):
-                continue
-            params_text = r.get('parameters')
-            params = json.loads(params_text) if isinstance(params_text, str) else (params_text or {})
-            rule = params.get('rule') if isinstance(params.get('rule'), dict) else params
-            d = datetime.date.fromisoformat(str(rule.get('date')))
-            if d != today:
-                continue
-            spec = _row_applicable_specificity(r, school, grade, class_number)
-            if spec < 0:
-                continue
-            level = int(r.get('level', 0) or 0)
-            candidates.append((level, spec, r, rule))
-        except Exception:
-            continue
-
-    if not candidates:
-        return schedule
-
-    candidates.sort(key=lambda x: (x[0], x[1]))
-
-    new_schedule = copy.deepcopy(schedule)
-    today_idx = today.isoweekday() % 7
     for level, spec, _row, rule in candidates:
         timetable_id = rule.get('timetableId')
         if not isinstance(timetable_id, str) or not timetable_id:
