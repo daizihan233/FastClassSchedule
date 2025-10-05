@@ -44,7 +44,7 @@ def _get_columns(conn: sqlite3.Connection, table: str) -> set[str]:
     return cols
 
 
-def fetch_records(limit: Optional[int] = None) -> List[Dict[str, Any]]:
+def fetch_records(hashid: str = None) -> List[Dict[str, Any]]:
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
@@ -57,16 +57,16 @@ def fetch_records(limit: Optional[int] = None) -> List[Dict[str, Any]]:
         select_cols.insert(2, 'scope')  # 放在 parameters 前
 
     sql = f"SELECT {', '.join(select_cols)} FROM records ORDER BY level DESC, hashid DESC"
-    if limit is not None:
-        sql += ' LIMIT ?'
-        cur.execute(sql, (limit,))
+    if hashid is not None:
+        sql += ' WHERE hashid=?'
+        cur.execute(sql, (hashid,))
     else:
         cur.execute(sql)
     rows = [dict(r) for r in cur.fetchall()]
 
     if not has_scope:
         for r in rows:
-            r['scope'] = None
+            r['scope'] = 'ALL'
 
     conn.close()
     return rows
