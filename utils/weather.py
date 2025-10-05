@@ -1,5 +1,3 @@
-from functools import lru_cache
-
 import aiohttp
 from loguru import logger
 

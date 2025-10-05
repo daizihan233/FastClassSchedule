@@ -1,10 +1,12 @@
-from fastapi import APIRouter, Depends, Body
-from fastapi.responses import ORJSONResponse
-import pathlib
-import orjson
 import json
-from loguru import logger
+import pathlib
 from typing import Annotated
+
+import orjson
+from fastapi import APIRouter, Depends
+from fastapi.responses import ORJSONResponse
+from loguru import logger
+
 from utils.globalvar import websocket_clients
 from utils.schedule.dataclasses import Timetable
 from utils.verify import get_current_identity
