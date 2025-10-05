@@ -35,8 +35,8 @@ def get_autorun_status():
     return {"data": data}
 
 
-@router.get('/web/autorun/{hashid}')
-def get_autorun_status(hashid: str):
+@router.get('/web/autorun/hash/{hashid}')
+def get_autorun_hash_status(hashid: str):
     """获取当前自动任务日志状态（返回目标记录）"""
     # 查询前刷新一次状态
     refresh_statuses()
@@ -45,6 +45,25 @@ def get_autorun_status(hashid: str):
         return {"data": []}
     data = [map_row(r) for r in rows][0]
     return {"data": data}
+
+
+@router.delete('/web/autorun/{hashid}')
+async def delete_autorun_record(hashid: str, identity: Annotated[str, Depends(get_current_identity)]):
+    logger.info(f"收到删除自动任务记录请求：{identity} 删除 {hashid}")
+    # 先查询该记录的 scope 以便广播
+    rows = fetch_records()
+    scope_to_notify: list[str] = []
+    for r in rows:
+        if r.get('hashid') == hashid:
+            scope_to_notify = parse_scope_value(r.get('scope'))
+            break
+    affected = delete_record(hashid)
+    if affected == 0:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='记录不存在')
+    refresh_statuses()
+    if scope_to_notify:
+        await notify_ws_by_scope(scope_to_notify)
+    return {"status": 200, "deleted": affected, "id": hashid}
 
 
 @router.get('/web/autorun/compensation/holiday/{year}/{month}/{day}')
@@ -148,25 +167,6 @@ async def put_timetable(
     refresh_statuses()
     await notify_ws_by_scope(scope)
     return {"status": 200, "id": hid}
-
-
-@router.delete('/web/autorun/{hashid}')
-async def delete_autorun_record(hashid: str, identity: Annotated[str, Depends(get_current_identity)]):
-    logger.info(f"收到删除自动任务记录请求：{identity} 删除 {hashid}")
-    # 先查询该记录的 scope 以便广播
-    rows = fetch_records()
-    scope_to_notify: list[str] = []
-    for r in rows:
-        if r.get('hashid') == hashid:
-            scope_to_notify = parse_scope_value(r.get('scope'))
-            break
-    affected = delete_record(hashid)
-    if affected == 0:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='记录不存在')
-    refresh_statuses()
-    if scope_to_notify:
-        await notify_ws_by_scope(scope_to_notify)
-    return {"status": 200, "deleted": affected, "id": hashid}
 
 
 @router.put('/web/autorun/schedule')

@@ -56,7 +56,7 @@ def fetch_records(hashid: str = None) -> List[Dict[str, Any]]:
     if has_scope:
         select_cols.insert(2, 'scope')  # 放在 parameters 前
 
-    sql = f"SELECT {', '.join(select_cols)} FROM records ORDER BY level DESC, hashid DESC"
+    sql = f"SELECT {', '.join(select_cols)} FROM records"
     if hashid is not None:
         sql += ' WHERE hashid=?'
         cur.execute(sql, (hashid,))
