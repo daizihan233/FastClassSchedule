@@ -1,9 +1,9 @@
-import sqlite3
-import os
-from typing import Optional, List, Dict, Any, Tuple
-import json
-import hashlib
 import datetime
+import hashlib
+import json
+import os
+import sqlite3
+from typing import Optional, List, Dict, Any, Tuple
 
 DB_PATH: Optional[str] = None
 
@@ -120,28 +120,23 @@ def upsert_record(etype: int, scope: List[str], level: int, parameters: Dict[str
 def _derive_status_for_record(etype: int, parameters: Dict[str, Any], today: Optional[datetime.date] = None) -> int:
     """
     计算记录状态：0 待生效, 1 生效中, 2 已过期
-    当前仅实现调休(etype=0)：在 parameters = {"rule": {"date": "YYYY-MM-DD", "useDate": "YYYY-MM-DD"}}
-    的语义下：
+    支持类型：
+    - 0 调休（COMPENSATION）
+    - 1 作息表调整（TIMETABLE）
+    - 2 课程表调整（SCHEDULE）
+    - 3 全部调整（ALL）
+    规则：按 parameters = {"rule": {"date": "YYYY-MM-DD", ...}} 的 date 与 today 对比：
     - today < date: 0 待生效
     - today == date: 1 生效中
     - today > date: 2 已过期
-    其他类型默认 0。
+    未提供合法 date 时返回 0。
     """
     if today is None:
         today = datetime.date.today()
-    if etype == 0 and isinstance(parameters, dict):
-        rule = parameters.get('rule') if isinstance(parameters.get('rule'), dict) else parameters
-        try:
-            d = datetime.date.fromisoformat(str(rule.get('date')))
-        except Exception:
-            return 0
-        if today < d:
-            return 0
-        if today == d:
-            return 1
-        return 2
-    # 扩展：etype=1（作息表调整）同样按 date 比较
-    if etype == 1 and isinstance(parameters, dict):
+    if not isinstance(parameters, dict):
+        return 0
+    # 仅对上述 4 种类型进行判定
+    if etype in (0, 1, 2, 3):
         rule = parameters.get('rule') if isinstance(parameters.get('rule'), dict) else parameters
         try:
             d = datetime.date.fromisoformat(str(rule.get('date')))

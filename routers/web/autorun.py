@@ -213,6 +213,8 @@ def get_need_count(scope, date_str=None, timetable_id=None):
 @router.get('/web/autorun')
 def get_autorun_status():
     """获取当前自动任务日志状态（返回所有记录）"""
+    # 查询前刷新一次状态
+    refresh_statuses()
     rows = fetch_records()
     if not rows:
         return {"data": []}

@@ -1,6 +1,8 @@
-from . import resolve, fix
-from utils.db import refresh_statuses
 import asyncio
+
+from utils.db import refresh_statuses
+from . import resolve, fix
+
 
 async def run_fix(schedule: dict) -> dict:
     """
@@ -26,8 +28,10 @@ async def run_resolve(schedule: dict, *, school: str, grade: int | str, class_nu
     await asyncio.to_thread(refresh_statuses)
     s = await resolve.resolve_week_cycle(schedule)
     s = await resolve.resolve_compensation(s, school=school, grade=grade, class_number=class_number)
-    # 新增：应用作息表调整规则
     s = await resolve.resolve_timetable(s, school=school, grade=grade, class_number=class_number)
+    # 新增：课程表调整与全部调整（按需覆盖）
+    s = await resolve.resolve_schedule(s, school=school, grade=grade, class_number=class_number)
+    s = await resolve.resolve_all(s, school=school, grade=grade, class_number=class_number)
     return s
 
 async def run_all(schedule: dict, *, school: str, grade: int | str, class_number: int | str) -> dict:
