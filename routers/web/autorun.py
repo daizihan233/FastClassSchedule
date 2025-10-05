@@ -9,6 +9,7 @@ from loguru import logger
 
 from utils.calc import compensation_from_holiday, compensation_from_workday, compensation_pairs
 from utils.db import fetch_records, delete_record, upsert_record, refresh_statuses
+from utils.globalvar import websocket_clients
 from utils.schedule.dataclasses import AutorunType
 from utils.verify import get_current_identity
 
@@ -249,6 +250,50 @@ def get_compensation_pairs(year: int):
         ]
     }
 
+
+async def _notify_ws_by_scope(scope: list[str]):
+    # 根据 scope 解析到 (school, grade) 键，并向对应 WS 连接广播 SyncConfig
+    targets: set[tuple[str, int]] = set()
+    if not isinstance(scope, list):
+        return
+    for s in scope:
+        try:
+            if not isinstance(s, str):
+                continue
+            val = s.strip()
+            if not val:
+                continue
+            if val.upper() == 'ALL':
+                targets.update(websocket_clients.keys())
+                continue
+            parts = val.split('/')
+            if len(parts) == 1:
+                school = parts[0]
+                # 该学校下所有已连接的 grade
+                targets.update({(sch, grd) for (sch, grd) in websocket_clients.keys() if sch == school})
+            else:
+                school = parts[0]
+                grade_str = parts[1]
+                try:
+                    grade = int(grade_str)
+                except Exception:
+                    # 若无法解析为 int，则尝试与已连接的键做字符串比较
+                    for (sch, grd) in websocket_clients.keys():
+                        if sch == school and str(grd) == grade_str:
+                            targets.add((sch, grd))
+                    continue
+                targets.add((school, grade))
+        except Exception:
+            continue
+    # 广播
+    for key in targets:
+        mgr = websocket_clients.get(key)
+        if mgr:
+            try:
+                await mgr.broadcast("SyncConfig")
+            except Exception:
+                continue
+
 @router.put('/web/autorun/compensation')
 async def put_compensation(
     identity: Annotated[str, Depends(get_current_identity)],
@@ -274,6 +319,7 @@ async def put_compensation(
     logger.info(f"收到新增调休任务请求：{identity} {parameters}")
     hid, _ = upsert_record(etype=etype, scope=scope, level=level, parameters=parameters)
     refresh_statuses()
+    await _notify_ws_by_scope(scope)
     return {"status": 200, "id": hid}
 
 @router.put('/web/autorun/timetable')
@@ -315,14 +361,25 @@ async def put_timetable(
     logger.info(f"收到新增/更新作息表任务请求：{identity} {parameters} edit_id={hashid}")
     hid, _ = upsert_record(etype=etype, scope=scope, level=level, parameters=parameters, hashid=hashid)
     refresh_statuses()
+    await _notify_ws_by_scope(scope)
     return {"status": 200, "id": hid}
 
 @router.delete('/web/autorun/{hashid}')
-def delete_autorun_record(hashid: str, identity: Annotated[str, Depends(get_current_identity)]):
+async def delete_autorun_record(hashid: str, identity: Annotated[str, Depends(get_current_identity)]):
     logger.info(f"收到删除自动任务记录请求：{identity} 删除 {hashid}")
+    # 先查询该记录的 scope 以便广播
+    rows = fetch_records()
+    scope_to_notify: list[str] = []
+    for r in rows:
+        if r.get('hashid') == hashid:
+            scope_to_notify = parse_scope_value(r.get('scope'))
+            break
     affected = delete_record(hashid)
     if affected == 0:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='记录不存在')
+    refresh_statuses()
+    if scope_to_notify:
+        await _notify_ws_by_scope(scope_to_notify)
     return {"status": 200, "deleted": affected, "id": hashid}
 
 
@@ -398,6 +455,7 @@ async def put_schedule(
     logger.info(f"收到新增课程表调整任务请求：{identity} {parameters}")
     hid, _ = upsert_record(etype=etype, scope=scope, level=level, parameters=parameters)
     refresh_statuses()
+    await _notify_ws_by_scope(scope)
     return {"status": 200, "id": hid}
 
 
@@ -435,4 +493,5 @@ async def put_all(
     logger.info(f"收到新增全部调整任务请求：{identity} {parameters}")
     hid, _ = upsert_record(etype=etype, scope=scope, level=level, parameters=parameters)
     refresh_statuses()
+    await _notify_ws_by_scope(scope)
     return {"status": 200, "id": hid}
